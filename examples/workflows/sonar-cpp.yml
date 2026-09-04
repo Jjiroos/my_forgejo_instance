@@ -1,0 +1,66 @@
+# Analyse SonarQube d'un projet C / C++.
+#
+# SonarQube Community n'embarque PAS d'analyseur C/C++ (réservé aux éditions
+# payantes). Ce workflow contourne la limite : cppcheck produit le diagnostic,
+# ses résultats sont convertis au format « generic issue » de SonarQube et
+# importés. Les problèmes C/C++ apparaissent alors dans le tableau de bord,
+# au même endroit que ceux des langages nativement supportés.
+#
+# Testé : les fichiers .c sont bien indexés par Community même sans analyseur,
+# donc l'import fonctionne. Ce qui manque par rapport à un vrai analyseur
+# SonarSource : couverture, duplication, hotspots de sécurité sur le C/C++.
+#
+# À copier dans `.forgejo/workflows/`, avec `cppcheck-to-sonar.py` à la racine
+# du dépôt (script fourni dans examples/sonar/).
+name: Analyse SonarQube (C/C++)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  SONAR_SCANNER_VERSION: 8.1.0.6389
+
+jobs:
+  sonar-cpp:
+    runs-on: docker
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Installer cppcheck et sonar-scanner
+        run: |
+          set -e
+          apt-get update -qq
+          apt-get install -y -qq cppcheck python3
+          ZIP="sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux-aarch64.zip"
+          curl -sSLo "/tmp/$ZIP" \
+            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/$ZIP"
+          unzip -qo "/tmp/$ZIP" -d /opt
+
+      - name: Diagnostic cppcheck
+        run: |
+          set -e
+          # --error-exitcode volontairement absent : on veut le rapport complet,
+          # c'est la Quality Gate de SonarQube qui décide de faire échouer ou non.
+          cppcheck --enable=warning,style,performance,portability \
+                   --xml --xml-version=2 . 2> cppcheck.xml || true
+          python3 cppcheck-to-sonar.py cppcheck.xml sonar-cppcheck.json
+
+      - name: Analyser
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          set -e
+          SCANNER="/opt/sonar-scanner-${SONAR_SCANNER_VERSION}-linux-aarch64/bin/sonar-scanner"
+          "$SCANNER" \
+            -Dsonar.projectKey="${GITHUB_REPOSITORY//\//_}" \
+            -Dsonar.projectName="${GITHUB_REPOSITORY}" \
+            -Dsonar.sources=. \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            -Dsonar.scm.provider=git \
+            -Dsonar.externalIssuesReportPaths=sonar-cppcheck.json

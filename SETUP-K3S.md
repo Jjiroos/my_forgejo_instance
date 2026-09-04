@@ -160,7 +160,7 @@ docker exec forgejo grep -A4 '^\[actions\]' /data/gitea/conf/app.ini
 Le token ne doit **jamais** finir dans un fichier versionné. Il est généré puis passé directement à Kubernetes, sans transiter par le disque :
 
 ```bash
-kubectl apply -f k3s/00-namespace.yaml       # crée le namespace d'abord
+kubectl apply -f k3s/runner/00-namespace.yaml       # crée le namespace d'abord
 
 TOKEN=$(docker exec -u git forgejo forgejo actions generate-runner-token)
 kubectl -n forgejo-actions create secret generic forgejo-runner-token \
@@ -176,17 +176,17 @@ C'est un token **de niveau instance** : il vaut pour tous les dépôts et peut e
 
 ```bash
 cd /opt/forgejo
-./k3s/apply.sh
+./k3s/apply.sh              # équivaut à : ./k3s/apply.sh runner
 ```
 
-Le script lit `.env`, substitue `${FORGEJO_DOMAIN}` et `${NODE_LAN_IP}` dans les manifestes, puis applique. Les fichiers versionnés ne contiennent donc aucune valeur propre à un environnement.
+Le script lit `.env`, substitue `${FORGEJO_DOMAIN}` et `${NODE_LAN_IP}` dans les manifestes du composant demandé, puis applique. Les composants sont les sous-dossiers de `k3s/` — `runner` (défaut) et `sonarqube` (cf. [SETUP-SONARQUBE.md](SETUP-SONARQUBE.md)). Les fichiers versionnés ne contiennent donc aucune valeur propre à un environnement.
 
 | Fichier | Contenu |
 |---|---|
-| `k3s/00-namespace.yaml` | namespace `forgejo-actions`, `ResourceQuota`, `LimitRange`, `NetworkPolicy` |
-| `k3s/10-runner-config.yaml` | `config.yaml` d'act_runner (capacité, timeouts, cache) |
-| `k3s/20-runner-statefulset.yaml` | le runner lui-même |
-| `k3s/apply.sh` | substitution + `kubectl apply` |
+| `k3s/runner/00-namespace.yaml` | namespace `forgejo-actions`, `ResourceQuota`, `LimitRange`, `NetworkPolicy` |
+| `k3s/runner/10-runner-config.yaml` | `config.yaml` d'act_runner (capacité, timeouts, cache) |
+| `k3s/runner/20-runner-statefulset.yaml` | le runner lui-même |
+| `k3s/apply.sh` | substitution des variables de `.env` + `kubectl apply`, pour un composant donné |
 
 ### Ce qui compose le pod
 
@@ -331,16 +331,16 @@ kubectl -n forgejo-actions scale statefulset forgejo-runner --replicas=2
 
 Chaque réplique s'enregistre toute seule sous son propre nom (`forgejo-runner-1`), réutilise le Secret existant et obtient ses propres volumes. Retour en arrière : `--replicas=1` puis remettre le quota d'origine.
 
-Pour rendre le changement permanent, éditer `replicas:` dans `k3s/20-runner-statefulset.yaml` et les valeurs du `ResourceQuota` dans `k3s/00-namespace.yaml`, puis `./k3s/apply.sh`.
+Pour rendre le changement permanent, éditer `replicas:` dans `k3s/runner/20-runner-statefulset.yaml` et les valeurs du `ResourceQuota` dans `k3s/runner/00-namespace.yaml`, puis `./k3s/apply.sh`.
 
-Alternative sans nouveau pod : augmenter `runner.capacity` dans `k3s/10-runner-config.yaml` (nombre de jobs simultanés **par** runner). Moins d'isolation, mais aucune RAM supplémentaire pour un second act_runner — à réserver aux jobs légers.
+Alternative sans nouveau pod : augmenter `runner.capacity` dans `k3s/runner/10-runner-config.yaml` (nombre de jobs simultanés **par** runner). Moins d'isolation, mais aucune RAM supplémentaire pour un second act_runner — à réserver aux jobs légers.
 
 ### Cas 2 — un runner différent (autres labels, autre image, autres limites)
 
 C'est ce qui permet de **router les jobs** : envoyer les builds lourds sur un runner aux limites plus larges, garder les jobs rapides sur le runner par défaut.
 
 ```bash
-cp k3s/20-runner-statefulset.yaml k3s/30-runner-heavy.yaml
+cp k3s/runner/20-runner-statefulset.yaml k3s/runner/30-runner-heavy.yaml
 ```
 
 Cinq points à modifier dans la copie — tous obligatoires, un oubli et les deux runners se marchent dessus :
@@ -355,7 +355,7 @@ Cinq points à modifier dans la copie — tous obligatoires, un oubli et les deu
 
 Le `ConfigMap` et le `Secret` sont réutilisables tels quels : le token est de niveau instance et sert à enregistrer autant de runners que voulu. Si tu veux une capacité différente, crée en revanche un second ConfigMap et pointe le nouveau StatefulSet dessus.
 
-Relever le quota en conséquence, puis appliquer — `apply.sh` prend automatiquement en compte tout nouveau fichier `k3s/*.yaml` :
+Relever le quota en conséquence, puis appliquer — `apply.sh` prend automatiquement en compte tout nouveau fichier `k3s/runner/*.yaml` :
 
 ```bash
 ./k3s/apply.sh
@@ -504,5 +504,5 @@ Pour désactiver aussi le moteur CI : retirer les deux variables `FORGEJO__actio
 
 ## 15. Améliorations possibles
 
-- **Cache des actions** (`cache.enabled: true` dans `k3s/10-runner-config.yaml`) : accélère nettement les workflows qui réinstallent des dépendances. Demande de vérifier que les conteneurs de job joignent bien le serveur de cache du runner — laissé désactivé par défaut pour éviter un mode de panne silencieux.
-- **Analyse SonarQube** : une fois un serveur Sonar déployé sur le LAN, un job `runs-on: docker` avec `SONAR_HOST_URL` et `SONAR_TOKEN` en secrets de dépôt suffit. Point à vérifier à ce moment-là : la disponibilité d'une image **arm64** pour le scanner, ou le repli sur un conteneur JDK arm64 qui télécharge le scanner.
+- **Cache des actions** (`cache.enabled: true` dans `k3s/runner/10-runner-config.yaml`) : accélère nettement les workflows qui réinstallent des dépendances. Demande de vérifier que les conteneurs de job joignent bien le serveur de cache du runner — laissé désactivé par défaut pour éviter un mode de panne silencieux.
+- **Analyse SonarQube** : fait — le serveur tourne dans ce même cluster, voir **[SETUP-SONARQUBE.md](SETUP-SONARQUBE.md)**.

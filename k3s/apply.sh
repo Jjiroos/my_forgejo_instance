@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
-# Applique les manifestes k3s de la CI en substituant les variables de .env.
+# Applique les manifestes k3s d'un composant en substituant les variables de .env.
+#
+#   ./k3s/apply.sh            → runner (défaut)
+#   ./k3s/apply.sh sonarqube
 #
 # Les manifestes versionnés ne contiennent aucune valeur propre à un
 # environnement : seulement ${FORGEJO_DOMAIN} et ${NODE_LAN_IP}, remplacés ici.
-# Le token d'enregistrement, lui, n'est JAMAIS dans un fichier — il vit dans un
-# Secret Kubernetes créé à la main (voir SETUP-K3S.md).
+# Les secrets (token de runner, mot de passe PostgreSQL) n'existent que dans des
+# Secrets Kubernetes créés à la main — jamais dans un fichier.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-NS=forgejo-actions
+COMPONENT="${1:-runner}"
+DIR="k3s/$COMPONENT"
+
+[ -d "$DIR" ] || {
+  echo "✗ composant inconnu : '$COMPONENT'" >&2
+  echo "  disponibles : $(find k3s -mindepth 1 -maxdepth 1 -type d -printf '%f ' 2>/dev/null)" >&2
+  exit 1
+}
 
 [ -f .env ] || { echo "✗ .env manquant — 'cp .env-template .env' puis renseigne-le." >&2; exit 1; }
 set -a; . ./.env; set +a
@@ -23,30 +33,35 @@ command -v envsubst >/dev/null || { echo "✗ envsubst introuvable — sudo apt-
 # les $VAR des scripts shell embarqués dans les manifestes.
 VARS='${FORGEJO_DOMAIN} ${NODE_LAN_IP}'
 
-echo "→ Namespace et garde-fous"
-kubectl apply -f k3s/00-namespace.yaml
+# Le premier manifeste (00-*) crée le namespace : il doit passer avant la
+# vérification des secrets, qui vivent dedans.
+NS_FILE="$DIR/00-namespace.yaml"
+[ -f "$NS_FILE" ] || { echo "✗ $NS_FILE manquant" >&2; exit 1; }
+echo "→ $NS_FILE"
+envsubst "$VARS" < "$NS_FILE" | kubectl apply -f -
 
-if ! kubectl -n "$NS" get secret forgejo-runner-token >/dev/null 2>&1; then
-  cat >&2 <<EOF
+NS=$(grep -m1 -A2 '^kind: Namespace' "$NS_FILE" | grep -m1 '  name:' | awk '{print $2}')
 
-✗ Secret 'forgejo-runner-token' absent du namespace $NS.
-  Génère un token puis crée le secret :
+# Secrets attendus par composant, créés hors dépôt (cf. la documentation).
+case "$COMPONENT" in
+  runner)    NEEDED="forgejo-runner-token" ; HINT="docker exec -u git forgejo forgejo actions generate-runner-token
+    kubectl -n $NS create secret generic forgejo-runner-token --from-literal=token='<TOKEN>'" ;;
+  sonarqube) NEEDED="sonarqube-db"          ; HINT="kubectl -n $NS create secret generic sonarqube-db --from-literal=password=\"\$(openssl rand -base64 24)\"" ;;
+  *)         NEEDED="" ;;
+esac
 
-    docker exec -u git forgejo forgejo actions generate-runner-token
-    kubectl -n $NS create secret generic forgejo-runner-token --from-literal=token='<TOKEN>'
+for sec in $NEEDED; do
+  kubectl -n "$NS" get secret "$sec" >/dev/null 2>&1 || {
+    printf '\n✗ Secret « %s » absent du namespace %s. Le créer :\n\n    %s\n\n' "$sec" "$NS" "$HINT" >&2
+    exit 1
+  }
+done
 
-EOF
-  exit 1
-fi
-
-# Tout manifeste numéroté à partir de 10 (00-namespace.yaml est déjà appliqué
-# plus haut). Ajouter un runner = déposer un k3s/30-*.yaml, rien à modifier ici.
-for f in $(ls k3s/[1-9]*.yaml 2>/dev/null | sort); do
+for f in $(find "$DIR" -maxdepth 1 -name '[1-9]*.yaml' | sort); do
   echo "→ $f"
   envsubst "$VARS" < "$f" | kubectl apply -f -
 done
 
 echo
-echo "✓ Appliqué. Suivi :"
+echo "✓ Appliqué ($COMPONENT). Suivi :"
 echo "    kubectl -n $NS get pods -w"
-echo "    kubectl -n $NS logs forgejo-runner-0 -c runner -f"

@@ -1,0 +1,80 @@
+# PostgreSQL dédié à SonarQube.
+#
+# Volontairement séparé de la base de Forgejo : SonarQube sollicite fortement
+# la sienne pendant une analyse, et faire dépendre la forge d'un service
+# secondaire serait un mauvais échange pour ~150 Mio économisés.
+#
+# Le mot de passe vient du Secret `sonarqube-db`, créé en ligne de commande —
+# il n'apparaît dans aucun fichier versionné.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sonarqube-db
+  namespace: sonarqube
+spec:
+  selector:
+    app: sonarqube-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sonarqube-db
+  namespace: sonarqube
+spec:
+  serviceName: sonarqube-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sonarqube-db
+  template:
+    metadata:
+      labels:
+        app: sonarqube-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: sonarqube
+            - name: POSTGRES_DB
+              value: sonarqube
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sonarqube-db
+                  key: password
+            # Sous-répertoire : local-path fournit un dossier déjà peuplé
+            # (lost+found absent ici, mais initdb refuse tout dossier non vide).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "sonarqube", "-d", "sonarqube"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 384Mi
+
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

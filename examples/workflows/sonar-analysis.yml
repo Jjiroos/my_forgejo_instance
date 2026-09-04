@@ -1,0 +1,54 @@
+# Analyse SonarQube — Python, Java, TS/JS, C#, et les autres langages couverts
+# nativement par SonarQube Community.
+#
+# À copier dans `.forgejo/workflows/` du dépôt à analyser.
+# Prérequis : les secrets SONAR_HOST_URL et SONAR_TOKEN (cf. SETUP-SONARQUBE.md).
+name: Analyse SonarQube
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  # Le zip `-linux-aarch64` embarque son propre JRE : aucun Java à installer.
+  SONAR_SCANNER_VERSION: 8.1.0.6389
+
+jobs:
+  sonar:
+    # Le label `docker` pointe sur node:22-bookworm. Node n'est pas un confort
+    # ici : l'analyseur JS/TS/CSS de SonarQube lance `node` et échoue sans lui.
+    runs-on: docker
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SonarQube date les problèmes à partir de l'historique git ; sans
+          # l'historique complet, tout apparaît comme du code neuf.
+          fetch-depth: 0
+
+      - name: Installer sonar-scanner (arm64)
+        run: |
+          set -e
+          ZIP="sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux-aarch64.zip"
+          curl -sSLo "/tmp/$ZIP" \
+            "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/$ZIP"
+          unzip -qo "/tmp/$ZIP" -d /opt
+
+      - name: Analyser
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          set -e
+          SCANNER="/opt/sonar-scanner-${SONAR_SCANNER_VERSION}-linux-aarch64/bin/sonar-scanner"
+          "$SCANNER" \
+            -Dsonar.projectKey="${GITHUB_REPOSITORY//\//_}" \
+            -Dsonar.projectName="${GITHUB_REPOSITORY}" \
+            -Dsonar.sources=. \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            -Dsonar.scm.provider=git
+            # Réglages utiles selon le projet :
+            #   -Dsonar.tests=tests
+            #   -Dsonar.python.version=3.11
+            #   -Dsonar.exclusions=**/node_modules/**,**/dist/**

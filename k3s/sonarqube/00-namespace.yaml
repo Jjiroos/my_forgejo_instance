@@ -1,0 +1,42 @@
+# Namespace SonarQube + garde-fous de ressources.
+#
+# Namespace distinct de celui de la CI : les deux enveloppes doivent rester
+# indépendantes, sinon une analyse lourde et un build concurrent se disputent
+# le même quota et l'un des deux se fait tuer.
+#
+# Budget : 3 Gio. SonarQube fait tourner trois JVM (web, Compute Engine,
+# Elasticsearch) qui ne rendent jamais leur tas — compter ~1,5 Gio en
+# permanence, le reste étant la marge d'analyse.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sonarqube
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: sonar-budget
+  namespace: sonarqube
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 768Mi
+    limits.cpu: "3"
+    limits.memory: 3Gi
+    pods: "4"
+    persistentvolumeclaims: "4"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: sonarqube
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
