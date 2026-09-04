@@ -131,6 +131,9 @@ services:
       - FORGEJO__server__DISABLE_SSH=true
       - FORGEJO__log__MODE=console,file
       - FORGEJO__log__LEVEL=info
+      # ── Forgejo Actions (runners k3s — voir SETUP-K3S.md) ──
+      - FORGEJO__actions__ENABLED=true
+      - FORGEJO__actions__DEFAULT_ACTIONS_URL=https://code.forgejo.org
     volumes:
       - ./data:/data
     ports:
@@ -170,6 +173,7 @@ Notes :
 - `DISABLE_SSH=true` + `START_SSH_SERVER=false` : on n'expose pas SSH Forgejo, les clones se font en HTTPS (§11).
 - `127.0.0.1:3000:3000` : Forgejo n'est jamais joignable en direct — uniquement via nginx.
 - `MODE=console,file` : Forgejo écrit dans `gitea.log` (lu par fail2ban) **et** dans la sortie Docker (`docker logs`).
+- `FORGEJO__actions__*` : active le moteur CI intégré. `DEFAULT_ACTIONS_URL=https://code.forgejo.org` fait résoudre les `uses: actions/checkout@v4` sur le miroir Forgejo ; les actions tierces se référencent par URL complète. Sans runner enregistré les workflows restent en attente — voir `SETUP-K3S.md` (runbook des runners, ajouté une fois le cluster validé).
 
 ---
 

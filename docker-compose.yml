@@ -18,6 +18,9 @@ services:
       - FORGEJO__server__DISABLE_SSH=true
       - FORGEJO__log__MODE=console,file
       - FORGEJO__log__LEVEL=info
+      # ── Forgejo Actions (runners k3s — voir SETUP-K3S.md) ──
+      - FORGEJO__actions__ENABLED=true
+      - FORGEJO__actions__DEFAULT_ACTIONS_URL=https://code.forgejo.org
     volumes:
       - ./data:/data
     ports:
