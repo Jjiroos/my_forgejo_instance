@@ -173,7 +173,7 @@ Notes :
 - `DISABLE_SSH=true` + `START_SSH_SERVER=false` : on n'expose pas SSH Forgejo, les clones se font en HTTPS (§11).
 - `127.0.0.1:3000:3000` : Forgejo n'est jamais joignable en direct — uniquement via nginx.
 - `MODE=console,file` : Forgejo écrit dans `gitea.log` (lu par fail2ban) **et** dans la sortie Docker (`docker logs`).
-- `FORGEJO__actions__*` : active le moteur CI intégré. `DEFAULT_ACTIONS_URL=https://code.forgejo.org` fait résoudre les `uses: actions/checkout@v4` sur le miroir Forgejo ; les actions tierces se référencent par URL complète. Sans runner enregistré les workflows restent en attente — voir `SETUP-K3S.md` (runbook des runners, ajouté une fois le cluster validé).
+- `FORGEJO__actions__*` : active le moteur CI intégré. `DEFAULT_ACTIONS_URL=https://code.forgejo.org` fait résoudre les `uses: actions/checkout@v4` sur le miroir Forgejo ; les actions tierces se référencent par URL complète. Sans runner enregistré les workflows restent en attente — voir **[SETUP-K3S.md](SETUP-K3S.md)**.
 
 ---
 
@@ -869,6 +869,9 @@ Rattraper tous les domaines en retard d'un coup (utile si plusieurs sous-domaine
 ├── .env-template           # gabarit de configuration         [versionné]
 ├── .gitignore              # exclut .env, data/, postgres-data/ [versionné]
 ├── README.md               # présentation du dépôt            [versionné]
+├── SETUP-K3S.md            # cluster k3s + runners Actions    [versionné]
+├── k3s/                    # manifestes des runners           [versionné]
+├── .forgejo/workflows/     # workflow de démonstration        [versionné]
 ├── .env                    # domaine + credentials PostgreSQL (chmod 600, JAMAIS versionné)
 ├── data/                   # données Forgejo (non versionné)
 │   └── gitea/

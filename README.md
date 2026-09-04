@@ -4,7 +4,7 @@ Déploiement reproductible d'une forge **Forgejo** auto-hébergée, accessible d
 Internet en HTTPS *trusted*, sur un serveur maison. Testé sur Raspberry Pi 5
 (Debian 12, ARM64) mais valable sur tout Debian 12+ / Ubuntu 22.04+ (ARM64 ou AMD64).
 
-La procédure complète est dans **[SETUP.md](SETUP.md)**.
+La procédure complète est dans **[SETUP.md](SETUP.md)**, et la CI auto-hébergée dans **[SETUP-K3S.md](SETUP-K3S.md)**.
 
 ## Ce que ça monte
 
@@ -16,12 +16,16 @@ La procédure complète est dans **[SETUP.md](SETUP.md)**.
 | **acme.sh + DuckDNS** | certificat Let's Encrypt renouvelé automatiquement, validation DNS-01 (aucune CA à installer côté client) |
 | **fail2ban** | jails `sshd` + `forgejo` contre le brute-force |
 | **systemd** | `forgejo.service` — démarrage automatique au boot |
+| **k3s** (mono-nœud) | cluster hébergeant les runners **Forgejo Actions** : CI maison, aucun runner cloud |
 
 Une seule exposition publique : le port `8181/tcp` redirigé par la box.
 SSH Forgejo désactivé, clones en HTTPS + access token.
 
 ```
-Internet ──:8181──► box (port-forward) ──► Pi ──► nginx (TLS) ──► 127.0.0.1:3000 ──► Forgejo ──► PostgreSQL
+Internet ──:8181──► box (port-forward) ──► serveur ──► nginx (TLS) ──► 127.0.0.1:3000 ──► Forgejo ──► PostgreSQL
+                                                                                            ▲
+                                              k3s ──► runner Actions ──► Docker-in-Docker ──┘
+                                                      (client sortant, aucun port ouvert)
 ```
 
 ## Démarrage rapide
@@ -40,16 +44,19 @@ fail2ban, le service systemd et le port-forward sont détaillés pas à pas dans
 
 | Fichier | Description |
 |---|---|
-| `SETUP.md` | guide d'installation + runbook d'exploitation (17 sections) |
+| `SETUP.md` | guide d'installation + runbook d'exploitation de la forge |
+| `SETUP-K3S.md` | guide du cluster k3s et des runners Forgejo Actions |
 | `docker-compose.yml` | services `forgejo` + `db`, paramétrés par `.env` |
+| `k3s/` | manifestes du runner (namespace + quota, config act_runner, StatefulSet) et `apply.sh` |
+| `.forgejo/workflows/ci-demo.yml` | workflow de démonstration, sert de test de recette |
 | `.env-template` | gabarit de configuration à copier en `.env` |
-| `.gitignore` | exclut `.env`, `data/`, `postgres-data/`, certificats |
+| `.gitignore` | exclut `.env`, `data/`, `postgres-data/`, certificats, kubeconfig |
 
 Les données runtime (`data/`, `postgres-data/`) et les secrets (`.env`, clés TLS)
 ne sont **pas** versionnés : ce dépôt ne contient que la configuration.
 
 ## À venir
 
-- **Forgejo Actions** + cluster de runners **k3s** sur le même nœud (CI maison),
-  premier job visé : analyse **SonarQube**. Pas encore implémenté — les manifestes
-  arriveront ici une fois le runner en production.
+- **Analyse SonarQube** en CI : le runner k3s est prêt à l'accueillir, il reste à
+  déployer un serveur SonarQube sur le LAN et à vérifier la disponibilité d'une
+  image arm64 pour le scanner (voir la dernière section de [SETUP-K3S.md](SETUP-K3S.md)).

@@ -38,3 +38,18 @@ spec:
       defaultRequest:
         cpu: 100m
         memory: 128Mi
+---
+# Aucun pod du cluster ne doit pouvoir joindre le démon Docker du runner.
+# dockerd-entrypoint.sh ouvre systématiquement tcp://0.0.0.0:2375 quand TLS est
+# désactivé : on ne peut pas le lui retirer, on ferme donc l'entrée côté réseau.
+# Le runner n'a besoin d'aucun trafic entrant (il interroge Forgejo en sortant),
+# et les conteneurs de job vivent dans le réseau interne de dind, non concerné.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: forgejo-actions
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress

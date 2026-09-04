@@ -35,6 +35,12 @@ spec:
       labels:
         app: forgejo-runner
     spec:
+      securityContext:
+        # L'image runner tourne en uid/gid 1000 (non-root) alors que dind crée
+        # /var/run/docker.sock en root:2375 (le gid du groupe `docker` de l'image
+        # dind). Sans ce groupe supplémentaire : « permission denied » sur le socket.
+        supplementalGroups: [2375]
+
       # Les pods k3s ne peuvent pas joindre le bridge Docker de Forgejo, et un
       # aller-retour par l'IP publique dépendrait du NAT loopback de la box.
       # On force donc le nom public vers l'IP LAN : le certificat Let's Encrypt
@@ -51,9 +57,11 @@ spec:
         - name: dind
           image: docker:27-dind
           restartPolicy: Always
-          args:
-            - --host=tcp://127.0.0.1:2375
-            - --host=unix:///var/run/docker.sock
+          # Pas d'--host ici : dockerd-entrypoint.sh pose déjà le socket unix ET
+          # tcp://0.0.0.0:2375 quand DOCKER_TLS_CERTDIR est vide. En rajouter un
+          # provoque « address already in use ». On consomme le socket unix, et
+          # le listener TCP résiduel est neutralisé par la NetworkPolicy du
+          # namespace (00-namespace.yaml).
           env:
             - name: DOCKER_TLS_CERTDIR      # TLS inutile : socket confiné à la netns du pod
               value: ""
@@ -67,6 +75,8 @@ spec:
           volumeMounts:
             - name: docker-graph
               mountPath: /var/lib/docker
+            - name: docker-sock
+              mountPath: /var/run
           resources:
             requests:
               cpu: 300m
@@ -122,12 +132,14 @@ spec:
           command: ["forgejo-runner", "daemon", "--config", "/config/config.yaml"]
           env:
             - name: DOCKER_HOST
-              value: tcp://127.0.0.1:2375
+              value: unix:///var/run/docker.sock
           volumeMounts:
             - name: runner-data
               mountPath: /data
             - name: config
               mountPath: /config
+            - name: docker-sock
+              mountPath: /var/run
           resources:
             requests:
               cpu: 100m
@@ -140,6 +152,8 @@ spec:
         - name: config
           configMap:
             name: forgejo-runner-config
+        - name: docker-sock          # socket dockerd partagé dind ↔ runner
+          emptyDir: {}
 
   volumeClaimTemplates:
     - metadata:

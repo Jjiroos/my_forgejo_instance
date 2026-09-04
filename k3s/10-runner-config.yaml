@@ -31,7 +31,7 @@ data:
 
     container:
       # Les jobs tournent dans le Docker du sidecar `dind`, jamais sur le nœud.
-      docker_host: tcp://127.0.0.1:2375
+      docker_host: unix:///var/run/docker.sock
       network: bridge
       privileged: false
       options:
