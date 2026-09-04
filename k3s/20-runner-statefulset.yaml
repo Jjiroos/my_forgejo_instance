@@ -1,0 +1,158 @@
+# Runner Forgejo Actions : act_runner + Docker-in-Docker.
+#
+# StatefulSet (et non Deployment) pour que /data soit persistant : le runner
+# s'enregistre UNE fois et garde une identité stable (forgejo-runner-0). Avec un
+# emptyDir, chaque redémarrage de pod créerait un nouveau runner et laisserait
+# une traînée d'entrées « offline » dans l'administration Forgejo.
+#
+# ${FORGEJO_DOMAIN} et ${NODE_LAN_IP} sont substitués depuis .env par k3s/apply.sh.
+apiVersion: v1
+kind: Service
+metadata:
+  name: forgejo-runner
+  namespace: forgejo-actions
+spec:
+  clusterIP: None          # service headless, requis par le StatefulSet
+  selector:
+    app: forgejo-runner
+  ports:
+    - name: noop
+      port: 9999
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: forgejo-runner
+  namespace: forgejo-actions
+spec:
+  serviceName: forgejo-runner
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forgejo-runner
+  template:
+    metadata:
+      labels:
+        app: forgejo-runner
+    spec:
+      # Les pods k3s ne peuvent pas joindre le bridge Docker de Forgejo, et un
+      # aller-retour par l'IP publique dépendrait du NAT loopback de la box.
+      # On force donc le nom public vers l'IP LAN : le certificat Let's Encrypt
+      # reste valide (même nom d'hôte) et le trafic ne quitte jamais le réseau local.
+      hostAliases:
+        - ip: "${NODE_LAN_IP}"
+          hostnames:
+            - "${FORGEJO_DOMAIN}"
+
+      initContainers:
+        # Sidecar natif (restartPolicy: Always) : démarre avant tout le reste et
+        # reste vivant. Son startupProbe garantit que Docker répond avant que le
+        # runner ne tente de s'y connecter.
+        - name: dind
+          image: docker:27-dind
+          restartPolicy: Always
+          args:
+            - --host=tcp://127.0.0.1:2375
+            - --host=unix:///var/run/docker.sock
+          env:
+            - name: DOCKER_TLS_CERTDIR      # TLS inutile : socket confiné à la netns du pod
+              value: ""
+          securityContext:
+            privileged: true                # requis par dockerd — voir la note sécurité de SETUP-K3S.md
+          startupProbe:
+            exec:
+              command: ["docker", "info"]
+            periodSeconds: 3
+            failureThreshold: 30            # 90 s pour démarrer
+          volumeMounts:
+            - name: docker-graph
+              mountPath: /var/lib/docker
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              # Les conteneurs de job sont des enfants de dind : leur mémoire est
+              # comptée dans CE cgroup. C'est donc ce plafond qui borne un build.
+              memory: 2Gi
+
+        # Enregistrement unique : ne fait rien si /data/.runner existe déjà.
+        - name: register
+          image: code.forgejo.org/forgejo/runner:6
+          command: ["sh", "-ec"]
+          args:
+            - |
+              if [ -f /data/.runner ]; then
+                echo "Runner déjà enregistré, rien à faire."
+                exit 0
+              fi
+              echo "Enregistrement de $POD_NAME auprès de $INSTANCE_URL…"
+              forgejo-runner register --no-interactive \
+                --config   /config/config.yaml \
+                --instance "$INSTANCE_URL" \
+                --token    "$RUNNER_TOKEN" \
+                --name     "$POD_NAME" \
+                --labels   "$RUNNER_LABELS"
+          env:
+            - name: INSTANCE_URL
+              value: "https://${FORGEJO_DOMAIN}:8181"
+            # ubuntu-latest est mappé sur la même image pour que les workflows
+            # copiés depuis GitHub tournent sans réécriture du runs-on.
+            - name: RUNNER_LABELS
+              value: "docker:docker://node:22-bookworm,arm64:docker://node:22-bookworm,ubuntu-latest:docker://node:22-bookworm"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: forgejo-runner-token   # créé en CLI, jamais versionné
+                  key: token
+          volumeMounts:
+            - name: runner-data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+
+      containers:
+        - name: runner
+          image: code.forgejo.org/forgejo/runner:6
+          command: ["forgejo-runner", "daemon", "--config", "/config/config.yaml"]
+          env:
+            - name: DOCKER_HOST
+              value: tcp://127.0.0.1:2375
+          volumeMounts:
+            - name: runner-data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+      volumes:
+        - name: config
+          configMap:
+            name: forgejo-runner-config
+
+  volumeClaimTemplates:
+    - metadata:
+        name: runner-data          # identité du runner (/data/.runner)
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+    - metadata:
+        name: docker-graph         # cache d'images de dind
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

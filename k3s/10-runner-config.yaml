@@ -1,0 +1,40 @@
+# Configuration du démon act_runner (Forgejo Actions).
+# Les labels ne sont PAS définis ici : ils sont fixés à l'enregistrement par
+# l'init container `register` du StatefulSet, qui fait foi côté serveur.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-runner-config
+  namespace: forgejo-actions
+data:
+  config.yaml: |
+    log:
+      level: info
+
+    runner:
+      file: /data/.runner
+      # Nombre de jobs exécutés en parallèle par ce runner.
+      # 2 sur 4 cœurs : au-delà les jobs se marchent dessus et le Pi rame.
+      capacity: 2
+      timeout: 1h
+      shutdown_timeout: 3h
+      insecure: false
+      fetch_timeout: 5s
+      fetch_interval: 2s
+      envs: {}
+
+    cache:
+      # Désactivé en v1 : le serveur de cache doit être joignable depuis les
+      # conteneurs de job (réseau interne de dind), ce qui demande une
+      # vérification dédiée. Voir « Améliorations » dans SETUP-K3S.md.
+      enabled: false
+
+    container:
+      # Les jobs tournent dans le Docker du sidecar `dind`, jamais sur le nœud.
+      docker_host: tcp://127.0.0.1:2375
+      network: bridge
+      privileged: false
+      options:
+      workdir_parent: workspace
+      valid_volumes: []
+      force_pull: false

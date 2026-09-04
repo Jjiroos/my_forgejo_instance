@@ -24,6 +24,11 @@
 *.bak
 
 # ─────────────────────────────────────────────────────────────
+# Kubernetes — kubeconfig et secrets générés hors dépôt
+kubeconfig
+*.kubeconfig
+k3s/*secret*.yaml
+
 # Outillage local
 # ─────────────────────────────────────────────────────────────
 .claude/settings.local.json

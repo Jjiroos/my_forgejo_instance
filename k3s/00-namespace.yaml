@@ -1,0 +1,40 @@
+# Namespace de la CI + garde-fous de ressources.
+#
+# Le ResourceQuota est la protection dure du serveur : quoi qu'il arrive dans un
+# workflow, la CI ne peut pas dépasser ce budget et ne peut donc pas faire tomber
+# Forgejo, PostgreSQL ou les autres services de la machine.
+# Dimensionné pour 1 runner / 2 jobs simultanés (voir SETUP-K3S.md pour scaler).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: forgejo-actions
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ci-budget
+  namespace: forgejo-actions
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 768Mi
+    limits.cpu: "3"
+    limits.memory: 2560Mi          # plafond RAM de TOUTE la CI
+    pods: "4"
+    persistentvolumeclaims: "6"
+---
+# Valeurs par défaut : tout conteneur sans resources explicites reste borné.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: forgejo-actions
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi

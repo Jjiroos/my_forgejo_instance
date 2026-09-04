@@ -1,0 +1,26 @@
+# Workflow de recette : prouve que le runner k3s prend bien les jobs.
+# Sert aussi d'exemple minimal à copier dans tes propres dépôts.
+name: CI demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    # Labels disponibles : docker, arm64, ubuntu-latest (tous mappés sur
+    # node:22-bookworm, image multi-arch qui résout l'arm64 toute seule).
+    runs-on: docker
+    steps:
+      - name: Contexte d'exécution
+        run: |
+          echo "architecture : $(uname -m)"      # attendu : aarch64
+          echo "noyau        : $(uname -r)"
+          grep '^PRETTY_NAME' /etc/os-release
+
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Lister les fichiers versionnés
+        run: git ls-files
