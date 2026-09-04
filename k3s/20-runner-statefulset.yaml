@@ -133,6 +133,12 @@ spec:
           env:
             - name: DOCKER_HOST
               value: unix:///var/run/docker.sock
+            # act_runner est un programme Go : sans pression mémoire, son tas
+            # grossit sans jamais être rendu au système (~250 Mio observés en
+            # 42 min à vide) jusqu'à l'OOM kill. GOMEMLIMIT force le GC bien
+            # avant le plafond du cgroup — garder ~20 % de marge sous la limite.
+            - name: GOMEMLIMIT
+              value: "400MiB"
           volumeMounts:
             - name: runner-data
               mountPath: /data
@@ -146,7 +152,7 @@ spec:
               memory: 128Mi
             limits:
               cpu: 500m
-              memory: 256Mi
+              memory: 512Mi
 
       volumes:
         - name: config

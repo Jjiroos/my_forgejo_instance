@@ -39,7 +39,9 @@ EOF
   exit 1
 fi
 
-for f in k3s/10-*.yaml k3s/20-*.yaml; do
+# Tout manifeste numéroté à partir de 10 (00-namespace.yaml est déjà appliqué
+# plus haut). Ajouter un runner = déposer un k3s/30-*.yaml, rien à modifier ici.
+for f in $(ls k3s/[1-9]*.yaml 2>/dev/null | sort); do
   echo "→ $f"
   envsubst "$VARS" < "$f" | kubectl apply -f -
 done

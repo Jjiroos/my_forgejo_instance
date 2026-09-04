@@ -15,11 +15,12 @@ Guide pour ajouter une **CI auto-hébergée** à l'instance Forgejo montée par 
 7. [Déployer le runner](#7-déployer-le-runner)
 8. [Vérifier de bout en bout](#8-vérifier-de-bout-en-bout)
 9. [Exploitation au quotidien](#9-exploitation-au-quotidien)
-10. [Dimensionner et scaler](#10-dimensionner-et-scaler)
-11. [Sécurité](#11-sécurité)
-12. [Dépannage](#12-dépannage)
-13. [Désinstallation](#13-désinstallation)
-14. [Améliorations possibles](#14-améliorations-possibles)
+10. [Visualiser et superviser le cluster](#10-visualiser-et-superviser-le-cluster)
+11. [Ajouter des runners](#11-ajouter-des-runners)
+12. [Sécurité](#12-sécurité)
+13. [Dépannage](#13-dépannage)
+14. [Désinstallation](#14-désinstallation)
+15. [Améliorations possibles](#15-améliorations-possibles)
 
 ---
 
@@ -48,7 +49,7 @@ Deux choses à retenir :
 - **Le runner est un client sortant.** Il interroge Forgejo, personne ne l'appelle. Aucun port supplémentaire n'est ouvert sur la box : l'exposition publique reste le seul `8181/tcp` de [SETUP.md §9](SETUP.md#9-box--routeur--redirection-du-port-8181).
 - **Les jobs tournent dans un Docker imbriqué** (`dind`), pas dans le Docker de l'hôte ni dans containerd. Un job ne voit donc jamais les conteneurs Forgejo ou les autres services.
 
-Ressources mesurées au repos : **dind ~126 Mio, act_runner ~23 Mio**, plus ~600 Mio pour le plan de contrôle k3s.
+Ressources mesurées au repos : **dind ~35-130 Mio, act_runner ~25 Mio au démarrage**, plus ~600 Mio pour le plan de contrôle k3s. Le tas de act_runner grossit ensuite tant qu'il n'y a pas de pression mémoire — d'où le `GOMEMLIMIT` de la [§7](#7-déployer-le-runner).
 
 ---
 
@@ -193,13 +194,14 @@ Le script lit `.env`, substitue `${FORGEJO_DOMAIN}` et `${NODE_LAN_IP}` dans les
 |---|---|---|
 | `dind` (sidecar natif) | démon Docker qui exécute les jobs | 2 CPU / **2 Gio** |
 | `register` (init) | enregistre le runner au tout premier démarrage | — |
-| `runner` | act_runner, interroge Forgejo et pilote dind | 0,5 CPU / 256 Mio |
+| `runner` | act_runner, interroge Forgejo et pilote dind | 0,5 CPU / 512 Mio |
 
-Quatre décisions qui méritent une explication :
+Cinq décisions qui méritent une explication :
 
 - **StatefulSet, pas Deployment.** `/data` est un volume persistant, donc le runner s'enregistre une seule fois et garde une identité stable. Avec un `emptyDir`, chaque redémarrage de pod créerait un nouveau runner et laisserait une traînée d'entrées « offline » dans l'administration Forgejo.
 - **`hostAliases`.** Le runner cible `https://<SOUS_DOMAINE>.duckdns.org:8181` mais ce nom est résolu vers l'IP LAN du serveur. Le certificat Let's Encrypt reste valide (même nom d'hôte) et le trafic ne sort jamais du réseau local. Sans cela il faudrait compter sur le NAT loopback de la box, qui n'est pas garanti — et les pods k3s ne peuvent de toute façon pas joindre le bridge Docker de Forgejo.
 - **Socket unix plutôt que TCP.** Le runner parle à dind via `/var/run/docker.sock` partagé par un `emptyDir`. Docker déprécie l'écoute TCP sans authentification et annonce sa suppression.
+- **`GOMEMLIMIT` sur le conteneur runner.** act_runner est écrit en Go : sans pression mémoire, son tas grossit sans jamais être rendu au système. Mesuré ici : ~25 Mio au démarrage, ~253 Mio après 42 minutes **à vide**, puis OOM kill. `GOMEMLIMIT=400MiB` sous une limite de 512 Mio force le ramasse-miettes bien avant le plafond du cgroup. Régler un plafond sans `GOMEMLIMIT` ne fait que repousser l'échéance.
 - **La limite de 2 Gio est sur `dind`, pas sur le runner.** Les conteneurs de job sont des enfants du démon Docker : leur mémoire est comptée dans **son** cgroup. C'est donc ce plafond qui borne réellement un build.
 
 ---
@@ -241,6 +243,7 @@ Onglet **Actions** du dépôt → job vert. Repères de la première exécution 
 | Budget consommé | `kubectl -n forgejo-actions get resourcequota` |
 | Redémarrer le runner | `kubectl -n forgejo-actions delete pod forgejo-runner-0` |
 | Réappliquer la config | `./k3s/apply.sh` |
+| Interface de navigation | `k9s -n forgejo-actions` (cf. [§10](#10-visualiser-et-superviser-le-cluster)) |
 | Arrêter la CI sans désinstaller | `kubectl -n forgejo-actions scale statefulset forgejo-runner --replicas=0` |
 | Arrêter k3s entièrement | `sudo systemctl stop k3s` |
 
@@ -252,7 +255,116 @@ kubectl -n forgejo-actions exec forgejo-runner-0 -c dind -- docker system prune 
 
 ---
 
-## 10. Dimensionner et scaler
+## 10. Visualiser et superviser le cluster
+
+### k9s — l'interface du quotidien
+
+`k9s` est un navigateur de cluster en terminal : il n'a **aucun composant résident**, il ne coûte donc rien en RAM quand tu ne l'utilises pas. C'est le bon choix sur une petite machine.
+
+Il n'est pas dans les dépôts Debian, c'est un binaire à poser à la main :
+
+```bash
+VER=$(curl -sS https://api.github.com/repos/derailed/k9s/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
+cd /tmp
+curl -sSLO "https://github.com/derailed/k9s/releases/download/${VER}/k9s_Linux_arm64.tar.gz"
+curl -sSLO "https://github.com/derailed/k9s/releases/download/${VER}/checksums.sha256"
+grep 'k9s_Linux_arm64.tar.gz$' checksums.sha256 | sha256sum -c -    # doit afficher : OK
+tar xzf k9s_Linux_arm64.tar.gz k9s
+sudo install -o root -g root -m 755 k9s /usr/local/bin/k9s
+rm -f k9s k9s_Linux_arm64.tar.gz checksums.sha256
+k9s version
+```
+
+> Vérifie toujours le checksum : c'est un binaire téléchargé hors gestionnaire de paquets, donc sans signature APT pour te protéger.
+
+Lancement : `k9s`. Sur un terminal étroit, `k9s -n forgejo-actions` démarre directement sur le bon namespace.
+
+| Touche | Effet |
+|---|---|
+| `:pods` `:svc` `:pvc` `:no` | changer de type de ressource (`:` puis le nom) |
+| `0` / `1` … | filtrer par namespace (`0` = tous) |
+| `l` | logs du conteneur sélectionné |
+| `s` | ouvrir un shell dedans |
+| `d` / `y` | décrire / voir le YAML |
+| `ctrl-d` | supprimer un pod (il sera recréé) |
+| `:pu` | *pulses* — vue d'ensemble animée du cluster |
+| `?` puis `:q` | aide, puis quitter |
+
+Un pod à deux conteneurs comme le runner demande de choisir lequel : sélectionne le pod, `Entrée` pour descendre dans ses conteneurs, puis `l` pour les logs.
+
+### Ce que la supervision intégrée ne fait pas
+
+`metrics-server` ne fournit que **l'instantané**. Aucun historique n'est conservé, aucune alerte n'est possible : si la machine sature pendant la nuit, rien ne permettra de remonter le temps. Pour du diagnostic à chaud c'est suffisant, pour de la supervision ça ne l'est pas.
+
+Trois façons d'aller plus loin, par coût croissant :
+
+| Approche | Coût RAM | Ce que ça apporte |
+|---|---|---|
+| `kubectl top` + k9s | ~0 | instantané, diagnostic à chaud |
+| Agent de métriques vers une base existante (Telegraf → InfluxDB) | ~50 Mio | historique et alertes sans déployer une seconde base |
+| Prometheus + Grafana dans le cluster | 600 Mio – 1 Gio | supervision complète, mais mange le budget réservé à la CI |
+
+Sur un serveur qui héberge déjà une base de séries temporelles, la deuxième ligne est le meilleur rapport valeur/RAM — inutile d'empiler un second système de stockage de métriques.
+
+### Suivre la CI elle-même
+
+Pour l'état des runners et les logs de jobs, l'interface de référence reste **Forgejo** : *Site Administration → Actions → Runners* pour l'état (Idle / Active, dernier contact), et l'onglet *Actions* de chaque dépôt pour le détail des exécutions.
+
+---
+
+## 11. Ajouter des runners
+
+Deux besoins différents, deux procédures.
+
+### Cas 1 — plus de jobs en parallèle, même type de runner
+
+C'est le cas d'un pic de charge : les jobs font la queue et tu veux les absorber plus vite. Il faut **deux gestes, pas un** — sans le premier, le nouveau pod reste `Pending`, bloqué par le quota :
+
+```bash
+# 1. relever le plafond du namespace
+kubectl -n forgejo-actions patch resourcequota ci-budget \
+  --type merge -p '{"spec":{"hard":{"limits.memory":"5Gi","requests.memory":"1536Mi"}}}'
+
+# 2. ajouter une réplique
+kubectl -n forgejo-actions scale statefulset forgejo-runner --replicas=2
+```
+
+Chaque réplique s'enregistre toute seule sous son propre nom (`forgejo-runner-1`), réutilise le Secret existant et obtient ses propres volumes. Retour en arrière : `--replicas=1` puis remettre le quota d'origine.
+
+Pour rendre le changement permanent, éditer `replicas:` dans `k3s/20-runner-statefulset.yaml` et les valeurs du `ResourceQuota` dans `k3s/00-namespace.yaml`, puis `./k3s/apply.sh`.
+
+Alternative sans nouveau pod : augmenter `runner.capacity` dans `k3s/10-runner-config.yaml` (nombre de jobs simultanés **par** runner). Moins d'isolation, mais aucune RAM supplémentaire pour un second act_runner — à réserver aux jobs légers.
+
+### Cas 2 — un runner différent (autres labels, autre image, autres limites)
+
+C'est ce qui permet de **router les jobs** : envoyer les builds lourds sur un runner aux limites plus larges, garder les jobs rapides sur le runner par défaut.
+
+```bash
+cp k3s/20-runner-statefulset.yaml k3s/30-runner-heavy.yaml
+```
+
+Cinq points à modifier dans la copie — tous obligatoires, un oubli et les deux runners se marchent dessus :
+
+| À changer | De | Vers |
+|---|---|---|
+| `metadata.name` (Service **et** StatefulSet) | `forgejo-runner` | `forgejo-runner-heavy` |
+| `spec.serviceName` | `forgejo-runner` | `forgejo-runner-heavy` |
+| `selector.matchLabels.app` et `template.metadata.labels.app` | `forgejo-runner` | `forgejo-runner-heavy` |
+| `RUNNER_LABELS` | `docker:docker://…` | `gros-build:docker://<TON_IMAGE>` |
+| `resources.limits` du conteneur `dind` | `2Gi` | ce que tu veux allouer |
+
+Le `ConfigMap` et le `Secret` sont réutilisables tels quels : le token est de niveau instance et sert à enregistrer autant de runners que voulu. Si tu veux une capacité différente, crée en revanche un second ConfigMap et pointe le nouveau StatefulSet dessus.
+
+Relever le quota en conséquence, puis appliquer — `apply.sh` prend automatiquement en compte tout nouveau fichier `k3s/*.yaml` :
+
+```bash
+./k3s/apply.sh
+kubectl -n forgejo-actions get pods
+```
+
+Le nouveau runner apparaît dans *Site Administration → Actions → Runners* avec ses propres labels, et un workflow le cible par `runs-on: gros-build`.
+
+### Dimensionnement de référence
 
 La configuration livrée vise **1 développeur en usage courant, une dizaine en pic** :
 
@@ -264,23 +376,11 @@ La configuration livrée vise **1 développeur en usage courant, une dizaine en 
 
 Sur une machine à 4 cœurs, le facteur limitant est le CPU, pas le nombre de runners : au-delà de ~4 jobs simultanés les builds se ralentissent mutuellement. Les jobs excédentaires **font la queue**, ce qui est le comportement souhaitable — mieux vaut attendre que faire tomber la forge.
 
-Pour encaisser un pic (4 jobs simultanés), il faut **deux gestes, pas un** :
-
-```bash
-# 1. relever le plafond, sinon le 2ᵉ pod reste Pending (quota dépassé)
-kubectl -n forgejo-actions patch resourcequota ci-budget \
-  --type merge -p '{"spec":{"hard":{"limits.memory":"5Gi","requests.memory":"1536Mi"}}}'
-# 2. ajouter une réplique
-kubectl -n forgejo-actions scale statefulset forgejo-runner --replicas=2
-```
-
-Chaque réplique s'enregistre toute seule sous son propre nom (`forgejo-runner-1`) et obtient ses propres volumes. Pour revenir en arrière : `--replicas=1`, puis remettre le quota d'origine.
-
-> Sur une machine partagée, vérifier `free -h` avant de scaler. Un service gourmand allumé en même temps qu'un build lourd peut faire basculer la machine sur le swap.
+> Avant de scaler sur une machine partagée, regarde `free -h` et `kubectl top nodes`. Un service gourmand allumé en même temps qu'un build lourd peut faire basculer la machine sur le swap.
 
 ---
 
-## 11. Sécurité
+## 12. Sécurité
 
 **Le conteneur `dind` est privilégié**, ce qui équivaut à un accès root sur le nœud. C'est inhérent à l'exécution de conteneurs de job : il n'y a pas de version « non privilégiée » de ce montage qui reste simple et fiable. Conséquence pratique :
 
@@ -298,7 +398,7 @@ Les garde-fous en place :
 
 ---
 
-## 12. Dépannage
+## 13. Dépannage
 
 ### Le pod reste `Init:CrashLoopBackOff`, dind dit `address already in use`
 
@@ -329,6 +429,32 @@ kubectl -n forgejo-actions exec forgejo-runner-0 -c dind -- ls -ln /var/run/dock
 docker run --rm --entrypoint sh code.forgejo.org/forgejo/runner:6 -c id
 ```
 
+### Le conteneur `runner` redémarre tout seul (`OOMKilled`, exit 137)
+
+```bash
+kubectl -n forgejo-actions get pod forgejo-runner-0 \
+  -o jsonpath='{.status.containerStatuses[0].lastState}'
+# ..."exitCode":137,"reason":"OOMKilled"...
+```
+
+Confirmer que c'est bien la limite **du conteneur** et non une pression mémoire de la machine — la distinction change complètement le correctif :
+
+```bash
+sudo dmesg -T | grep -iE 'oom-kill|Memory cgroup' | tail -5
+```
+
+- `constraint=CONSTRAINT_MEMCG` → le conteneur a dépassé **sa propre** limite.
+- `constraint=CONSTRAINT_NONE` → la machine entière manquait de RAM, le noyau a choisi une victime ; c'est le dimensionnement global qu'il faut revoir, pas la limite du pod.
+
+Dans le premier cas, pour act_runner, la cause est presque toujours la croissance du tas Go décrite en [§7](#7-déployer-le-runner) : vérifier que `GOMEMLIMIT` est bien positionné et vaut environ 80 % de `limits.memory`.
+
+```bash
+kubectl -n forgejo-actions get pod forgejo-runner-0 \
+  -o jsonpath='{.spec.containers[0].env[?(@.name=="GOMEMLIMIT")].value}{"\n"}'
+```
+
+Le redémarrage est sans danger : le runner se ré-enregistre à partir de son volume persistant et reprend le travail. Un job en cours au moment du kill est en revanche perdu et doit être relancé.
+
 ### Le runner ne voit pas la forge
 
 ```bash
@@ -349,7 +475,7 @@ Egress des pods bloqué : voir [§4](#4-ouvrir-le-réseau-des-pods-dans-ufw). Te
 kubectl -n forgejo-actions describe pod forgejo-runner-0 | tail -20
 ```
 
-Le plus souvent : `ResourceQuota` dépassé (voir [§10](#10-dimensionner-et-scaler)) ou volume non provisionné.
+Le plus souvent : `ResourceQuota` dépassé (voir [§11](#11-ajouter-des-runners)) ou volume non provisionné.
 
 ### Des runners « offline » s'accumulent dans l'interface
 
@@ -357,7 +483,7 @@ Symptôme d'un `/data` non persistant. Le StatefulSet livré ici l'évite ; les 
 
 ---
 
-## 13. Désinstallation
+## 14. Désinstallation
 
 ```bash
 # Retirer seulement la CI, garder le cluster
@@ -376,8 +502,7 @@ Pour désactiver aussi le moteur CI : retirer les deux variables `FORGEJO__actio
 
 ---
 
-## 14. Améliorations possibles
+## 15. Améliorations possibles
 
 - **Cache des actions** (`cache.enabled: true` dans `k3s/10-runner-config.yaml`) : accélère nettement les workflows qui réinstallent des dépendances. Demande de vérifier que les conteneurs de job joignent bien le serveur de cache du runner — laissé désactivé par défaut pour éviter un mode de panne silencieux.
-- **Runners par label** : un second StatefulSet avec d'autres labels et d'autres images permet de router les jobs (`runs-on: gros-build`) vers des runners aux limites différentes.
 - **Analyse SonarQube** : une fois un serveur Sonar déployé sur le LAN, un job `runs-on: docker` avec `SONAR_HOST_URL` et `SONAR_TOKEN` en secrets de dépôt suffit. Point à vérifier à ce moment-là : la disponibilité d'une image **arm64** pour le scanner, ou le repli sur un conteneur JDK arm64 qui télécharge le scanner.
