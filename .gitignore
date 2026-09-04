@@ -1,0 +1,36 @@
+# ─────────────────────────────────────────────────────────────
+# Secrets — jamais commités
+# ─────────────────────────────────────────────────────────────
+.env
+*.key
+*.crt
+*.pem
+*.p12
+
+# ─────────────────────────────────────────────────────────────
+# Données runtime (bind-mounts docker-compose)
+#   data/          : dépôts git, objets LFS, app.ini (SECRET_KEY,
+#                    LFS_JWT_SECRET), gitea.log, clés hôte SSH
+#   postgres-data/ : cluster PostgreSQL
+# ─────────────────────────────────────────────────────────────
+/data/
+/postgres-data/
+
+# Sauvegardes / dumps
+*.sql
+*.dump
+*.tar
+*.tar.gz
+*.bak
+
+# ─────────────────────────────────────────────────────────────
+# Outillage local
+# ─────────────────────────────────────────────────────────────
+.claude/settings.local.json
+docker-compose.override.yml
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+*.swp
+*~
