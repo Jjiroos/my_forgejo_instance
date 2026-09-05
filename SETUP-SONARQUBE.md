@@ -141,7 +141,7 @@ Forgejo sépare en deux objets ce que GitLab réunit dans une seule liste cochab
 
 | | **Secrets** | **Variables** |
 |---|---|---|
-| Stockage | **chiffré** (AES-GCM, clé dérivée de `SECRET_KEY`) | **en clair** |
+| Stockage | **chiffré** au repos, clé dérivée de `SECRET_KEY` | **en clair** |
 | Relecture | impossible — *write-only* | affichée et éditable |
 | Masquage dans les logs de job | oui | **non** |
 | Contexte du workflow | `${{ secrets.NOM }}` | `${{ vars.NOM }}` |
