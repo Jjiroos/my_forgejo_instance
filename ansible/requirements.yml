@@ -29,3 +29,9 @@ collections:
   # — mais requis dès qu'un inventaire réel référence secrets/*.sops.yaml.
   - name: community.sops
     version: ">=1.6.2"
+
+  # community.docker.docker_compose_v2, qui pilote le plugin compose en ligne
+  # de commande. Le plancher est la version qui a introduit ce module ; les
+  # anciennes n'exposaient que docker_compose, bâti sur l'API v1 abandonnée.
+  - name: community.docker
+    version: ">=3.6.0"

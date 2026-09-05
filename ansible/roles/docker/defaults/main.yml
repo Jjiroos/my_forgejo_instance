@@ -1,0 +1,40 @@
+---
+# Moteur Docker installé depuis le dépôt officiel, pas depuis Debian. La
+# version packagée par la distribution retarde de plusieurs versions majeures
+# et ne fournit pas le plugin `compose` v2, dont toute la pile dépend.
+
+# `ansible_architecture` donne aarch64/x86_64 ; apt attend arm64/amd64. La
+# table est explicite plutôt que devinée : une correspondance manquante doit
+# faire échouer le rôle, pas produire un dépôt introuvable.
+docker_apt_architectures:
+  x86_64: amd64
+  aarch64: arm64
+
+docker_apt_keyring: /etc/apt/keyrings/docker.asc
+docker_apt_filename: docker      # → /etc/apt/sources.list.d/docker.list
+
+# Les autres fichiers de sources décrivant download.docker.com sont retirés.
+# Sans cela, une machine déjà pourvue de Docker par un autre chemin — c'est le
+# cas des runners GitHub — se retrouve avec le même dépôt déclaré deux fois.
+docker_purge_foreign_sources: true
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+# Journaux bornés. Sur une machine à stockage limité, des journaux de
+# conteneur non tournés finissent par remplir la partition — et un disque
+# plein arrête la forge bien plus sûrement qu'une panne matérielle.
+docker_daemon_options:
+  log-driver: json-file
+  log-opts:
+    max-size: "10m"
+    max-file: "3"
+
+# Appartenir au groupe `docker` équivaut à un accès root sur la machine : le
+# démon tourne en root et monte n'importe quel chemin de l'hôte. Vide par
+# défaut, à renseigner sciemment dans l'inventaire.
+docker_users: []

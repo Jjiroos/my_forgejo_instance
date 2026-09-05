@@ -1,0 +1,92 @@
+---
+- name: Vérifier que l'architecture est connue du rôle
+  ansible.builtin.assert:
+    that: ansible_architecture in docker_apt_architectures
+    fail_msg: >-
+      Architecture {{ ansible_architecture }} absente de
+      docker_apt_architectures. Ajouter la correspondance vers le nom apt
+      correspondant plutôt que de laisser construire une URL de dépôt qui
+      n'existe pas.
+    quiet: true
+
+# ── Dépôt officiel Docker ─────────────────────────────────────
+- name: Créer le répertoire des trousseaux apt
+  ansible.builtin.file:
+    path: "{{ docker_apt_keyring | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# La clé est récupérée en ASCII armé et déposée telle quelle : apt sait la
+# lire, et un fichier texte se relit et se compare, contrairement à un binaire.
+- name: Déposer la clé de signature Docker
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+    dest: "{{ docker_apt_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Relever les autres sources apt pointant vers Docker
+  ansible.builtin.find:
+    paths: /etc/apt/sources.list.d
+    patterns: ["*.list", "*.sources"]
+    contains: '.*download\.docker\.com.*'
+  register: docker_foreign_sources
+  when: docker_purge_foreign_sources
+
+- name: Retirer les sources Docker en doublon
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ docker_foreign_sources.files | default([]) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: item.path | basename != docker_apt_filename ~ '.list'
+
+- name: Déclarer le dépôt Docker
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ docker_apt_architectures[ansible_architecture] }}
+      signed-by={{ docker_apt_keyring }}]
+      https://download.docker.com/linux/{{ ansible_distribution | lower }}
+      {{ ansible_distribution_release }} stable
+    filename: "{{ docker_apt_filename }}"
+    state: present
+    update_cache: true
+
+# `present`, jamais `latest` : une montée de version du moteur pendant une
+# convergence de routine redémarre le démon, donc la forge. Elle se décide.
+- name: Installer le moteur et le plugin compose
+  ansible.builtin.apt:
+    name: "{{ docker_packages }}"
+    state: present
+
+# ── Configuration du démon ────────────────────────────────────
+- name: Configurer le démon Docker
+  ansible.builtin.copy:
+    content: "{{ docker_daemon_options | to_nice_json }}\n"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Redémarrer Docker
+
+- name: Activer Docker
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+# Le redémarrage du démon doit avoir eu lieu avant que le rôle forgejo ne
+# manipule des conteneurs, pas à la fin du playbook.
+- name: Appliquer les redémarrages en attente
+  ansible.builtin.meta: flush_handlers
+
+- name: Autoriser des comptes à piloter Docker
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
