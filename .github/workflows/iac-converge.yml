@@ -74,9 +74,23 @@ jobs:
           ansible --version | head -1
 
       # ── Premier passage : la machine part de zéro ─────────────
+      #
+      # Le nom de la tâche en échec est émis en annotation, pas seulement dans
+      # le journal : une annotation se lit sans authentification, un journal de
+      # job non. Sur un dépôt public, c'est la différence entre un échec qu'on
+      # diagnostique de l'extérieur et un échec qu'il faut aller déterrer.
       - name: Convergence
         working-directory: ansible
-        run: ansible-playbook -i inventory/ci.yml site.yml --diff
+        run: |
+          set +e
+          ansible-playbook -i inventory/ci.yml site.yml --diff 2>&1 | tee /tmp/passe1.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            awk '/^TASK \[/{t=$0} /^fatal:|^failed:/{print "::error::Tâche en échec — " t; print "::error::" substr($0,1,500); exit}' /tmp/passe1.log
+            echo "::error::Premier passage en échec (code ${rc})."
+            exit "$rc"
+          fi
 
       # ── Second passage : il ne doit plus rien rester à faire ──
       #
@@ -84,11 +98,25 @@ jobs:
       # modifications à chaque exécution n'est pas de l'infrastructure comme
       # code : c'est un script shell déguisé, impossible à relancer sans
       # crainte sur une machine en production.
+      #
+      # Deux issues distinctes, à ne surtout pas confondre : le playbook peut
+      # échouer, ou réussir en modifiant à nouveau quelque chose. La première
+      # version confondait les deux — `set -e` coupait sur l'échec avant que le
+      # message n'ait pu être écrit, et il ne restait qu'un « exit code 2 ».
       - name: Idempotence
         working-directory: ansible
         run: |
-          set -o pipefail
-          ansible-playbook -i inventory/ci.yml site.yml --diff | tee /tmp/passe2.log
+          set +e
+          ansible-playbook -i inventory/ci.yml site.yml --diff 2>&1 | tee /tmp/passe2.log
+          rc=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$rc" -ne 0 ]; then
+            awk '/^TASK \[/{t=$0} /^fatal:|^failed:/{print "::error::Tâche en échec — " t; print "::error::" substr($0,1,500); exit}' /tmp/passe2.log
+            echo "::error::Le second passage a échoué (code ${rc}) : ce n'est pas un défaut d'idempotence, c'est une tâche en erreur."
+            exit "$rc"
+          fi
+
           recap=$(grep -E '^ci-runner +:' /tmp/passe2.log || true)
           if [ -z "$recap" ]; then
             echo "::error::Récapitulatif introuvable — le format de sortie a changé ?"
@@ -98,7 +126,7 @@ jobs:
           modifs=$(echo "$recap" | sed -n 's/.*changed=\([0-9]\+\).*/\1/p')
           if [ "$modifs" != "0" ]; then
             echo "::error::Le second passage a modifié ${modifs} chose(s) : une tâche n'est pas idempotente."
-            grep -E '^changed: ' -B4 /tmp/passe2.log || true
+            awk '/^TASK \[/{t=$0} /^changed:/{print "::error::Tâche non idempotente — " t}' /tmp/passe2.log | sort -u | head -8
             exit 1
           fi
           echo "Second passage sans modification."
