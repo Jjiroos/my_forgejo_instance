@@ -307,6 +307,31 @@ sudo dmesg -T | grep -iE 'oom-kill|Memory cgroup' | tail -3
 
 L'image du job n'a pas Node. Utiliser `runs-on: docker` (cf. [§5](#5-brancher-un-dépôt)).
 
+### `Unsupported Node.JS version detected`
+
+```
+ERROR Unsupported Node.JS version detected 20.20.2.
+      Please upgrade to the latest Node.JS LTS version.
+Caused by: java.lang.IllegalStateException: Error while running Node.js.
+```
+
+Piège : l'image du job peut très bien fournir une version récente et le scanner en voir une autre. Une étape `actions/setup-node` place **sa** version en tête du `PATH` et masque celle de l'image.
+
+```yaml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20      # ← shadow le Node 22 de l'image
+```
+
+Les analyseurs SonarQube suivent le calendrier LTS de Node et laissent tomber les versions en fin de vie. Trois sorties, par ordre de préférence :
+
+1. Aligner `node-version` sur la version de l'image (la voir avec `docker run --rm node:22-bookworm node -v`).
+2. Supprimer l'étape `setup-node` si elle ne sert qu'à fournir Node — l'image l'a déjà. À garder en revanche pour son cache npm.
+3. En dernier recours, forcer l'interpréteur sans toucher au `PATH` :
+   `-Dsonar.nodejs.executable=/usr/local/bin/node`
+
+Le symptôme est reconnaissable : le scan démarre normalement, indexe les fichiers et déroule les *sensors*, puis casse uniquement à l'analyse JS/TS. Les langages déjà traités (Python, CSS…) apparaissent dans le log juste avant l'échec.
+
 ### `Failed to get server version` / `no scheme was found`
 
 ```
