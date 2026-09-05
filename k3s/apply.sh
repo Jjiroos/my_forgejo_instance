@@ -5,7 +5,8 @@
 #   ./k3s/apply.sh sonarqube
 #
 # Les manifestes versionnés ne contiennent aucune valeur propre à un
-# environnement : seulement ${FORGEJO_DOMAIN} et ${NODE_LAN_IP}, remplacés ici.
+# environnement : seulement ${FORGEJO_DOMAIN}, ${NODE_LAN_IP} et
+# ${ADMIN_WORKSTATION_IP}, remplacés ici.
 # Les secrets (token de runner, mot de passe PostgreSQL) n'existent que dans des
 # Secrets Kubernetes créés à la main — jamais dans un fichier.
 set -euo pipefail
@@ -25,13 +26,14 @@ set -a; . ./.env; set +a
 
 : "${FORGEJO_DOMAIN:?absent de .env}"
 : "${NODE_LAN_IP:?absent de .env}"
+: "${ADMIN_WORKSTATION_IP:?absent de .env}"
 
 command -v kubectl  >/dev/null || { echo "✗ kubectl introuvable — k3s est-il installé ?" >&2; exit 1; }
 command -v envsubst >/dev/null || { echo "✗ envsubst introuvable — sudo apt-get install -y gettext-base" >&2; exit 1; }
 
-# Liste explicite : envsubst ne doit toucher QUE ces deux variables, surtout pas
+# Liste explicite : envsubst ne doit toucher QUE ces variables-là, surtout pas
 # les $VAR des scripts shell embarqués dans les manifestes.
-VARS='${FORGEJO_DOMAIN} ${NODE_LAN_IP}'
+VARS='${FORGEJO_DOMAIN} ${NODE_LAN_IP} ${ADMIN_WORKSTATION_IP}'
 
 # Le premier manifeste (00-*) crée le namespace : il doit passer avant la
 # vérification des secrets, qui vivent dedans.

@@ -84,6 +84,7 @@ Tant que le statut est `STARTING`, l'API répond déjà mais l'interface n'est p
 | `k3s/sonarqube/00-namespace.yaml` | namespace, `ResourceQuota` 3 Gio / 3 CPU, `LimitRange` |
 | `k3s/sonarqube/10-postgres.yaml` | PostgreSQL 16 dédié + PVC 5 Gio |
 | `k3s/sonarqube/20-sonarqube.yaml` | SonarQube + PVC data (10 Gio) et extensions (2 Gio) |
+| `k3s/sonarqube/30-networkpolicy.yaml` | qui a le droit de joindre l'IHM et la base |
 
 Trois décisions qui méritent une explication :
 
@@ -260,8 +261,46 @@ Ce qui protège réellement le service :
 | `hostIP: <IP_LAN>` dans le manifeste | jamais exposé au-delà du réseau local |
 | Aucune redirection de port sur la box | inaccessible depuis Internet |
 | `sonar.forceAuthentication=true` (défaut) | API en `401` sans identifiants |
+| `NetworkPolicy sonarqube-ingress` | **seul** filtre efficace par adresse source |
 
-Pour restreindre l'accès à certaines machines du LAN, UFW est inopérant : il faut une `NetworkPolicy` dans le namespace `sonarqube`, que kube-router applique.
+#### Restreindre l'accès à certaines machines
+
+UFW étant inopérant ici, le filtrage se fait par `NetworkPolicy` — c'est kube-router qui les applique, et c'est lui qui décide sur ce chemin. `k3s/sonarqube/30-networkpolicy.yaml` n'autorise l'IHM que depuis le poste d'administration déclaré dans `.env` :
+
+```yaml
+  ingress:
+    - from:
+        - ipBlock: { cidr: ${ADMIN_WORKSTATION_IP}/32 }   # poste d'administration
+        - ipBlock: { cidr: 10.42.0.0/16 }                 # conteneurs de job (CI)
+      ports:
+        - { protocol: TCP, port: 9000 }
+```
+
+Deux points qui ne sont pas évidents :
+
+- **Le CIDR des pods est indispensable.** Les conteneurs de job joignent SonarQube par l'IP LAN du nœud, mais au moment où la politique est évaluée la source est encore l'IP du pod runner : la traduction *hairpin* n'a lieu qu'en `POSTROUTING`, après le filtrage. Sans cette entrée, **toute analyse échoue**.
+- **Impossible de se verrouiller dehors.** kube-router place un `--src-type LOCAL -j ACCEPT` en amont de la chaîne de politique : le serveur lui-même garde l'accès, et les sondes du kubelet continuent de passer.
+
+Une seconde politique restreint PostgreSQL au seul pod SonarQube.
+
+Vérifier que le filtrage mord vraiment — une politique qui n'est pas testée ne prouve rien :
+
+```bash
+# 1. retirer temporairement le CIDR des pods
+kubectl -n sonarqube patch networkpolicy sonarqube-ingress --type json \
+  -p '[{"op":"remove","path":"/spec/ingress/0/from/1"}]'
+
+# 2. depuis un conteneur de job : doit échouer (code curl 7)
+kubectl -n forgejo-actions exec forgejo-runner-0 -c dind -- \
+  docker run --rm --network bridge curlimages/curl:8.11.1 \
+  -s -m 8 -o /dev/null -w '%{http_code}\n' http://<IP_LAN>:9000/api/system/status
+
+# 3. depuis le serveur : doit toujours répondre 200
+curl -s -o /dev/null -w '%{http_code}\n' http://<IP_LAN>:9000/api/system/status
+
+# 4. restaurer
+set -a && . ./.env && set +a && ./k3s/apply.sh sonarqube
+```
 
 **L'accès est en HTTP, pas HTTPS** : le mot de passe circule en clair sur le réseau local. Le durcissement est un vhost nginx TLS réutilisant le certificat existant, sur un port non redirigé par la box.
 

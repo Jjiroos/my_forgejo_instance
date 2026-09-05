@@ -1,0 +1,62 @@
+# Restreint qui peut joindre l'interface SonarQube.
+#
+# ⚠️ Pourquoi une NetworkPolicy et pas une règle UFW : le trafic vers un
+# `hostPort` est DNAT vers le pod, donc il traverse la chaîne FORWARD, où k3s
+# insère ses propres règles AVANT celles d'UFW. Un pod sans NetworkPolicy y est
+# marqué 0x20000 et accepté bien avant `ufw-before-forward`. Une règle UFW sur
+# le port 9000 n'a donc littéralement aucun effet — vérifié sur cette machine.
+# Le seul filtre qui s'applique réellement est celui que kube-router évalue,
+# c'est-à-dire ce fichier.
+#
+# Ce qui reste autorisé sans figurer ici : le nœud lui-même. kube-router place
+# un `--src-type LOCAL -j ACCEPT` en amont de la chaîne de politique, ce qui
+# garantit à la fois l'accès depuis le serveur et le bon fonctionnement des
+# sondes du kubelet. Impossible de se verrouiller dehors.
+#
+# ${ADMIN_WORKSTATION_IP} est substitué depuis .env par k3s/apply.sh.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sonarqube-ingress
+  namespace: sonarqube
+spec:
+  podSelector:
+    matchLabels:
+      app: sonarqube
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Poste d'administration — le seul du LAN à pouvoir ouvrir l'IHM.
+        - ipBlock:
+            cidr: ${ADMIN_WORKSTATION_IP}/32
+        # Conteneurs de job de la CI. Ils joignent SonarQube par l'IP LAN du
+        # nœud : au moment où la politique est évaluée, la source est encore
+        # l'IP du pod runner (la traduction hairpin n'a lieu qu'en POSTROUTING,
+        # après le filtrage). Sans cette entrée, toute analyse échoue.
+        - ipBlock:
+            cidr: 10.42.0.0/16
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+# La base ne doit être jointe que par SonarQube, jamais depuis le LAN.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sonarqube-db-ingress
+  namespace: sonarqube
+spec:
+  podSelector:
+    matchLabels:
+      app: sonarqube-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sonarqube
+      ports:
+        - protocol: TCP
+          port: 5432
