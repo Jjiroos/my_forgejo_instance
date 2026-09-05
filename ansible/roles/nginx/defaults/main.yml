@@ -10,10 +10,11 @@ nginx_ssl_ciphers: "HIGH:!aNULL:!MD5"
 # Zones de limitation de débit, déclarées dans le contexte http.
 #   - { name: forgejo_login, size: 10m, rate: "5r/m" }
 #
-# Elles vont dans un fichier qui n'appartient qu'à ce rôle : conf.d/ peut
-# contenir des zones de services hors périmètre, qu'un template exhaustif
-# effacerait sans prévenir.
-nginx_rate_limit_file: /etc/nginx/conf.d/10-forge-rate-limit.conf
+# Le rôle est propriétaire de ce fichier et le réécrit intégralement : il ne
+# doit donc contenir QUE des zones du périmètre. Une zone appartenant à un
+# service hors périmètre serait effacée — la garde ci-dessous refuse de
+# s'appliquer si une zone du rôle est déjà déclarée dans un AUTRE fichier.
+nginx_rate_limit_file: /etc/nginx/conf.d/00-rate-limit.conf
 nginx_rate_limit_zones: []
 
 # Sites à publier. Schéma d'une entrée :

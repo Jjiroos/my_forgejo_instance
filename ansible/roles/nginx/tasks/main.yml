@@ -3,9 +3,9 @@
     name: nginx
     state: present
 
-# Le rôle écrit dans SON fichier, jamais dans un fichier partagé : conf.d/
-# peut contenir des zones appartenant à des services hors périmètre, qu'un
-# template exhaustif effacerait silencieusement.
+# La garde ne protège pas d'un doublon avec soi-même — le fichier du rôle est
+# exclu de la recherche — mais d'une zone du périmètre déclarée dans un autre
+# fichier de conf.d/, ce que nginx refuse.
 - name: Relever les zones déjà déclarées ailleurs dans conf.d
   ansible.builtin.shell:
     cmd: >-

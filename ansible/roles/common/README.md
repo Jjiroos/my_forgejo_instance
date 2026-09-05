@@ -15,7 +15,9 @@ Conséquence à connaître : un `ufw status` sur un hôte existant montrera des 
 | `jail.d/00-defaults.conf` | ce rôle — `[DEFAULT]` et `[sshd]` |
 | `jail.d/10-<service>.conf` | le rôle qui déploie le service |
 
-Un hôte configuré à la main avant l'IaC a souvent un `jail.d/local.conf` mêlant les deux. Le rôle le **signale sans le supprimer** : il porte encore des jails que personne ne revendique. Les valeurs étant identiques et `jail.d/` étant chargé par ordre alphabétique, la cohabitation est sans effet le temps de la transition.
+Un hôte configuré à la main avant l'IaC a souvent un `jail.d/local.conf` mêlant les deux. Le rôle le **signale sans le supprimer** : il porte encore des jails que personne ne revendique.
+
+Cette cohabitation est **inerte, pas transitoirement tolérée** : `jail.d/` est fusionné par ordre alphabétique, et les valeurs sont identiques. Vérifié sur l'hôte — `bantime=600`, `maxretry=5`, jails `sshd` et `forgejo` actives, avec ou sans `00-defaults.conf`. Il n'y a donc rien à retirer à la main ; `local.conf` disparaîtra quand le rôle `forgejo` reprendra sa jail.
 
 ## Points de vigilance
 

@@ -211,12 +211,13 @@ Les étapes 2 et 3 sont le cœur de la valeur : une fois le couple `acme` + `ngi
 
 Les rôles sont éprouvés en `--check` contre le serveur, mais leur première application réelle demande deux gestes manuels. Ils ne sont pas des oublis : ce sont les points où l'IaC prend possession de fichiers écrits à la main.
 
-| À faire | Pourquoi |
-|---|---|
-| Retirer `forgejo_login` de `conf.d/00-rate-limit.conf`, y laisser les zones hors périmètre | nginx refuse une zone déclarée deux fois. Le rôle s'arrête de lui-même sur ce conflit plutôt que de produire une configuration invalide |
-| Retirer `[DEFAULT]`, `[sshd]` et la jail `forgejo` de `jail.d/local.conf` | reprises par `00-defaults.conf` et, plus tard, par le rôle `forgejo` |
+Le rôle `nginx` est **propriétaire** de `conf.d/00-rate-limit.conf` et le réécrit intégralement. Ce fichier ne doit donc contenir que des zones du périmètre. Une garde vérifie qu'aucune zone du rôle n'est déjà déclarée dans un *autre* fichier de `conf.d/` : nginx refuse un doublon, avec un message sans appel —
 
-Aucun des deux n'est urgent : tant qu'ils ne sont pas faits, le rôle `nginx` refuse de s'appliquer et `common` produit un doublon sans effet.
+```
+[emerg] limit_req_zone "forgejo_login" is already bound to key "$binary_remote_addr"
+```
+
+Côté fail2ban, **rien à faire**. `jail.d/` est fusionné par ordre alphabétique et les valeurs de `00-defaults.conf` sont identiques à celles du `local.conf` historique : la cohabitation est inerte. `local.conf` disparaîtra naturellement quand le rôle `forgejo` reprendra sa jail.
 
 ---
 
