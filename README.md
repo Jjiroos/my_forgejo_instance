@@ -68,4 +68,4 @@ Tout tient sur une seule machine à 8 Gio. Le budget mémoire est donc le vrai
 facteur limitant, pas le CPU : chaque brique est bornée par un `ResourceQuota`
 k3s pour qu'aucune ne puisse faire tomber les autres. Les chiffres mesurés et
 les combinaisons qui ne rentrent pas sont dans
-[SETUP-SONARQUBE.md §7](SETUP-SONARQUBE.md#7-budget-mémoire).
+[SETUP-SONARQUBE.md §8](SETUP-SONARQUBE.md#8-budget-mémoire).

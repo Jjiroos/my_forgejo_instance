@@ -10,10 +10,11 @@ Déploiement d'un **SonarQube Community** sur le cluster k3s monté par [SETUP-K
 4. [Première connexion et token CI](#4-première-connexion-et-token-ci)
 5. [Brancher un dépôt](#5-brancher-un-dépôt)
 6. [Le cas C / C++](#6-le-cas-c--c)
-7. [Budget mémoire](#7-budget-mémoire)
-8. [Exploitation](#8-exploitation)
-9. [Dépannage](#9-dépannage)
-10. [Désinstallation](#10-désinstallation)
+7. [Utiliser et paramétrer le serveur](#7-utiliser-et-paramétrer-le-serveur)
+8. [Budget mémoire](#8-budget-mémoire)
+9. [Exploitation](#9-exploitation)
+10. [Dépannage](#10-dépannage)
+11. [Désinstallation](#11-désinstallation)
 
 ---
 
@@ -26,7 +27,7 @@ Déploiement d'un **SonarQube Community** sur le cluster k3s monté par [SETUP-K
 | Python, Java, JS/TS, C#, Go, Kotlin, PHP, Ruby, Scala, HTML, CSS, XML | ✅ analysé nativement |
 | **C, C++** | ❌ analyseur réservé aux éditions payantes — contournement en [§6](#6-le-cas-c--c) |
 
-**Et une contrainte matérielle :** SonarQube ne s'endort pas. Ses trois JVM (web, Compute Engine, Elasticsearch) gardent leur tas. Mesuré ici **au repos, sans aucune analyse : 2,0 Gio**. Ce n'est pas un service qu'on installe « au cas où » sur une petite machine — voir [§7](#7-budget-mémoire).
+**Et une contrainte matérielle :** SonarQube ne s'endort pas. Ses trois JVM (web, Compute Engine, Elasticsearch) gardent leur tas. Mesuré ici **au repos, sans aucune analyse : 2,0 Gio**. Ce n'est pas un service qu'on installe « au cas où » sur une petite machine — voir [§8](#8-budget-mémoire).
 
 L'architecture retenue :
 
@@ -225,7 +226,69 @@ Le workflow lance cppcheck, convertit son XML au format *generic issue*, puis pa
 
 ---
 
-## 7. Budget mémoire
+## 7. Utiliser et paramétrer le serveur
+
+### Accéder à l'interface — et ce qui la protège vraiment
+
+L'interface s'ouvre dans un navigateur depuis n'importe quelle machine du LAN :
+
+```
+http://<IP_LAN>:9000
+```
+
+**`http://localhost:9000` ne fonctionne pas, même depuis le serveur lui-même.** Le `hostPort` est lié à l'IP LAN précise et non à `0.0.0.0` : c'est ce qui garantit que le service ne peut pas être exposé par erreur, mais il faut donc toujours viser l'IP.
+
+> ⚠️ **UFW ne filtre pas un `hostPort` k3s.** Le trafic est DNAT vers le pod, donc il traverse `FORWARD`, où k3s insère ses règles **avant** celles d'UFW :
+>
+> ```
+> FORWARD → KUBE-ROUTER-FORWARD → (pod sans NetworkPolicy → marque 0x20000)
+>         → -m mark --mark 0x20000 -j ACCEPT     ← accepté ici
+>         → ... ufw-before-forward ...            ← jamais atteint
+> ```
+>
+> Le port est donc joignable depuis tout le LAN **bien qu'aucune règle UFW ne l'autorise** et que la politique soit `deny (routed)`. Ajouter ou retirer une règle UFW pour ce port n'a aucun effet. Vérifier soi-même avant de conclure :
+>
+> ```bash
+> sudo iptables -S FORWARD | head
+> sudo iptables -S KUBE-POD-FW-<hash>      # le hash vient de KUBE-ROUTER-FORWARD
+> ```
+
+Ce qui protège réellement le service :
+
+| Garde-fou | Effet |
+|---|---|
+| `hostIP: <IP_LAN>` dans le manifeste | jamais exposé au-delà du réseau local |
+| Aucune redirection de port sur la box | inaccessible depuis Internet |
+| `sonar.forceAuthentication=true` (défaut) | API en `401` sans identifiants |
+
+Pour restreindre l'accès à certaines machines du LAN, UFW est inopérant : il faut une `NetworkPolicy` dans le namespace `sonarqube`, que kube-router applique.
+
+**L'accès est en HTTP, pas HTTPS** : le mot de passe circule en clair sur le réseau local. Le durcissement est un vhost nginx TLS réutilisant le certificat existant, sur un port non redirigé par la box.
+
+### Les deux couches de paramétrage
+
+Ne pas les confondre — une seule des deux est versionnée.
+
+| Couche | Où | Contenu |
+|---|---|---|
+| **Infra** | `k3s/sonarqube/*.yaml` (versionné) | image, taille des JVM, exposition, sondes, volumes, quotas |
+| **Application** | base PostgreSQL, pilotée par l'IHM | profils qualité, Quality Gates, utilisateurs, permissions, tokens |
+
+La couche applicative ne se retrouve **que** dans la sauvegarde de la base (cf. [§9](#9-exploitation)). Après modification d'un manifeste :
+
+```bash
+set -a && . ./.env && set +a && ./k3s/apply.sh sonarqube
+```
+
+### Premiers réglages conseillés dans l'IHM
+
+- **Définition du « nouveau code »** (*Administration → New Code*). Par défaut `PREVIOUS_VERSION` : sur un dépôt sans versions déclarées, aucune condition n'est évaluable et la Quality Gate reste **verte et vide** à la première analyse. Passer sur *Number of days* la rend immédiatement parlante.
+- **Visibilité des projets** (*Administration → Projects → Management*), y compris celle par défaut des nouveaux projets.
+- **Un compte non-admin** pour l'usage quotidien (*Administration → Users*).
+
+---
+
+## 8. Budget mémoire
 
 Mesures réelles sur ce serveur, au repos, sans analyse en cours :
 
@@ -261,7 +324,7 @@ Les volumes sont conservés, l'historique d'analyse aussi.
 
 ---
 
-## 8. Exploitation
+## 9. Exploitation
 
 | Action | Commande |
 |---|---|
@@ -283,7 +346,7 @@ kubectl -n sonarqube exec sonarqube-db-0 -- \
 
 ---
 
-## 9. Dépannage
+## 10. Dépannage
 
 ### Le pod boucle et les logs parlent de `max virtual memory areas`
 
@@ -381,7 +444,7 @@ Normal : téléchargement des analyseurs, chauffe des JVM, indexation. Les suiva
 
 ---
 
-## 10. Désinstallation
+## 11. Désinstallation
 
 ```bash
 kubectl delete namespace sonarqube          # ⚠️ supprime aussi les volumes et l'historique
