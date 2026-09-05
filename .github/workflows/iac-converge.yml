@@ -1,0 +1,187 @@
+---
+# Déploiement réel du playbook sur une machine jetable, sur les deux
+# architectures cibles. Un runner GitHub est une VM neuve à chaque exécution :
+# c'est exactement le scénario « reprise après panne » que ce dépôt prétend
+# couvrir, et le seul moyen honnête de le prouver.
+#
+# Rien ici ne touche une machine réelle. La cible est le runner lui-même
+# (`ansible_connection: local`), avec l'inventaire inventory/ci.yml et des
+# valeurs volontairement fictives : domaine en .invalid, tout en loopback,
+# certificat auto-signé. Aucun secret, aucun jeton, aucun compte tiers.
+name: IaC — convergence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/iac-converge.yml'
+  pull_request:
+    paths:
+      - 'ansible/**'
+      - '.github/workflows/iac-converge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  converge:
+    name: ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Une architecture qui échoue ne doit pas masquer le résultat de l'autre :
+      # savoir que ça passe sur arm64 et pas sur amd64 est l'information utile.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            profile: generic_amd64
+          # arm64 est l'architecture de la cible réelle (Raspberry Pi 5). Un
+          # runner arm64 n'est pas un Pi — d'où generic_arm64 et non
+          # raspberry_pi : l'architecture est la même, l'amorçage non.
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            profile: generic_arm64
+
+    env:
+      CI_HOST_PROFILE: ${{ matrix.profile }}
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Préparer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer Ansible
+        run: pip install --disable-pip-version-check ansible-core
+
+      - name: Installer les collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Contexte d'exécution
+        run: |
+          echo "architecture : $(uname -m)"
+          grep '^PRETTY_NAME' /etc/os-release
+          ansible --version | head -1
+
+      # ── Premier passage : la machine part de zéro ─────────────
+      - name: Convergence
+        working-directory: ansible
+        run: ansible-playbook -i inventory/ci.yml site.yml --diff
+
+      # ── Second passage : il ne doit plus rien rester à faire ──
+      #
+      # C'est le vrai test. Un playbook qui « marche » mais rejoue les mêmes
+      # modifications à chaque exécution n'est pas de l'infrastructure comme
+      # code : c'est un script shell déguisé, impossible à relancer sans
+      # crainte sur une machine en production.
+      - name: Idempotence
+        working-directory: ansible
+        run: |
+          set -o pipefail
+          ansible-playbook -i inventory/ci.yml site.yml --diff | tee /tmp/passe2.log
+          recap=$(grep -E '^ci-runner +:' /tmp/passe2.log || true)
+          if [ -z "$recap" ]; then
+            echo "::error::Récapitulatif introuvable — le format de sortie a changé ?"
+            exit 1
+          fi
+          echo "$recap"
+          modifs=$(echo "$recap" | sed -n 's/.*changed=\([0-9]\+\).*/\1/p')
+          if [ "$modifs" != "0" ]; then
+            echo "::error::Le second passage a modifié ${modifs} chose(s) : une tâche n'est pas idempotente."
+            grep -E '^changed: ' -B4 /tmp/passe2.log || true
+            exit 1
+          fi
+          echo "Second passage sans modification."
+
+      # ── Ce que le playbook a réellement produit ───────────────
+      #
+      # `changed=0` prouve la convergence, pas le résultat. Ces contrôles
+      # regardent la machine, pas le rapport d'Ansible.
+      - name: Vérifier le réglage noyau
+        run: |
+          valeur=$(sysctl -n vm.max_map_count)
+          echo "vm.max_map_count = ${valeur}"
+          test "${valeur}" = "524288"
+          test -f /etc/sysctl.d/99-sonarqube.conf
+
+      - name: Vérifier le certificat auto-signé
+        run: |
+          sudo test -f /etc/nginx/ssl/forgejo.crt
+          sudo openssl x509 -in /etc/nginx/ssl/forgejo.crt -noout -subject -dates -ext subjectAltName
+
+      - name: Vérifier la configuration nginx
+        run: |
+          sudo nginx -t
+          echo "--- vhosts activés"
+          ls -l /etc/nginx/sites-enabled/
+          test ! -e /etc/nginx/sites-enabled/default
+          echo "--- ports en écoute"
+          sudo ss -lntp | grep -E ':8181|:9443'
+
+      # L'amont (Forgejo, SonarQube) n'est pas déployé par ce playbook : nginx
+      # doit donc répondre 502. C'est le résultat attendu, et il prouve
+      # davantage qu'un 200 — la terminaison TLS, le filtrage par IP et le
+      # relais fonctionnent, seul le service derrière manque.
+      - name: Vérifier que nginx relaie
+        run: |
+          # -k : le certificat est auto-signé en CI, et il porte de toute façon
+          # forge.ci.invalid, pas 127.0.0.1.
+          for cible in "forgejo:8181" "sonarqube:9443"; do
+            nom=${cible%%:*}; port=${cible##*:}
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "https://127.0.0.1:${port}/" || echo "échec")
+            echo "${nom} (${port}, TLS) : ${code}"
+            test "${code}" = "502"
+          done
+
+      - name: Vérifier le pare-feu
+        run: |
+          sudo ufw status verbose
+          sudo ufw status | grep -q '8181/tcp'
+          sudo ufw status | grep -q '9443/tcp'
+          # Le pare-feu ne doit pas avoir coupé la machine du monde : la
+          # politique sortante reste `allow`, et la CI en dépend.
+          curl -sS -o /dev/null --max-time 15 https://api.github.com/
+
+      - name: Vérifier fail2ban
+        run: |
+          sudo systemctl is-active fail2ban
+          sudo fail2ban-client status
+          sudo fail2ban-client status sshd
+          # Une jail active n'est pas une jail qui surveille quelque chose : le
+          # filtre fourni par fail2ban vise `sshd.service`, que Debian et Ubuntu
+          # appellent `ssh.service`. Sans ce réglage, la jail compte zéro échec
+          # quoi qu'il arrive.
+          sudo fail2ban-client get sshd journalmatch | grep -q 'ssh.service'
+
+      # ── Diagnostic ────────────────────────────────────────────
+      - name: Rassembler de quoi comprendre un échec
+        if: failure()
+        run: |
+          echo "::group::nginx -t"
+          sudo nginx -t || true
+          echo "::endgroup::"
+          echo "::group::journal nginx"
+          sudo journalctl -u nginx --no-pager -n 60 || true
+          echo "::endgroup::"
+          echo "::group::journal fail2ban"
+          sudo journalctl -u fail2ban --no-pager -n 60 || true
+          echo "::endgroup::"
+          echo "::group::vhosts générés"
+          sudo tail -n +1 /etc/nginx/sites-available/* /etc/nginx/conf.d/*.conf || true
+          echo "::endgroup::"
+          echo "::group::ufw"
+          sudo ufw status numbered || true
+          echo "::endgroup::"
+          echo "::group::ports"
+          sudo ss -lntp || true
+          echo "::endgroup::"

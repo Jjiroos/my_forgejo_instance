@@ -6,6 +6,8 @@ Internet en HTTPS *trusted*, sur un serveur maison. Testé sur Raspberry Pi 5
 
 La procédure complète est dans **[SETUP.md](SETUP.md)**, la CI auto-hébergée dans **[SETUP-K3S.md](SETUP-K3S.md)**, et l'analyse de code dans **[SETUP-SONARQUBE.md](SETUP-SONARQUBE.md)**. L'automatisation de l'ensemble est décrite dans **[IAC.md](IAC.md)**.
 
+Le code d'infrastructure n'est pas seulement publié, il est **éprouvé** : à chaque commit, un runner GitHub jetable — amd64 et arm64 — reçoit le playbook, deux fois de suite, et le job échoue si le second passage modifie quoi que ce soit. Détail en [IAC.md §9](IAC.md#9-éprouver-le-code--la-ci-github).
+
 ## Ce que ça monte
 
 | Brique | Rôle |
@@ -58,11 +60,12 @@ fail2ban, le service systemd et le port-forward sont détaillés pas à pas dans
 | `IAC.md` | industrialisation Ansible + OpenTofu : frontière, étages, secrets |
 | `ansible/` | préparation de l'hôte — paquets, k3s, nginx, certificats |
 | `tofu/` | configuration par API — cluster, Forgejo, SonarQube |
-| `secrets/` | secrets chiffrés SOPS/age, versionnables sans risque |
+| `secrets/` | **gabarits seuls, sans aucune valeur.** Les fichiers chiffrés restent hors du dépôt — cf. [IAC.md §6](IAC.md#6-secrets--hors-du-dépôt-sans-exception) |
 | `docker-compose.yml` | services `forgejo` + `db`, paramétrés par `.env` |
 | `k3s/` | manifestes par composant — `runner/`, `sonarqube/` — et `apply.sh` |
 | `examples/` | workflows d'analyse prêts à copier et convertisseur cppcheck → SonarQube |
 | `.forgejo/workflows/ci-demo.yml` | workflow de démonstration, sert de test de recette |
+| `.github/workflows/` | CI publique : lint de l'IaC, garde anti-secret, convergence réelle sur runner jetable |
 | `.env-template` | gabarit de configuration à copier en `.env` |
 | `.gitignore` | exclut `.env`, `data/`, `postgres-data/`, certificats, kubeconfig |
 

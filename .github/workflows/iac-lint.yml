@@ -1,0 +1,135 @@
+---
+# Analyse statique de l'IaC. Rapide, sans effet de bord, sans le moindre secret :
+# c'est le filet qui doit attraper une faute de frappe avant qu'une machine ne
+# la subisse. La convergence réelle est dans iac-converge.yml.
+name: IaC — lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Garde-fou n°1 : rien de confidentiel dans le dépôt ────────
+  #
+  # La règle du projet est absolue — aucun secret ici, chiffré ou non. Un
+  # .gitignore l'exprime mais ne l'impose pas : il suffit d'un `git add -f`.
+  # Ce job, lui, refuse la livraison.
+  secrets:
+    name: Aucun secret versionné
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Refuser les fichiers qui ne doivent jamais être suivis
+        run: |
+          interdits=$(git ls-files -- \
+            'secrets/*.sops.yaml' 'secrets/*.sops.yml' \
+            '.sops.yaml' 'keys.txt' '*.agekey' 'age-key*.txt' \
+            '*.tfstate' '*.tfstate.*' '*.tfvars' \
+            ':!:*.example.*' ':!:*.example' ':!:*.tfvars.example')
+          if [ -n "$interdits" ]; then
+            echo "::error::Fichiers interdits dans le suivi git :"
+            echo "$interdits"
+            exit 1
+          fi
+          echo "Aucun chemin interdit suivi."
+
+      - name: Refuser une clé privée dans le contenu
+        run: |
+          # Deux motifs à très fort signal, sans faux positif plausible : une
+          # clé privée age, et un bloc PEM de clé privée. Ce fichier-ci est
+          # exclu de la recherche — il contient les motifs, forcément.
+          if git grep -l -E 'AGE-SECRET-KEY-1|-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+               -- . ':!:.github/workflows/iac-lint.yml'; then
+            echo "::error::Une clé privée apparaît dans un fichier versionné."
+            exit 1
+          fi
+          echo "Aucune clé privée dans le contenu."
+
+  # ── Garde-fou n°2 : le code Ansible tient debout ──────────────
+  ansible:
+    name: Ansible
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Préparer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer l'outillage
+        run: pip install --disable-pip-version-check ansible-core ansible-lint
+
+      - name: Installer les collections
+        run: ansible-galaxy collection install -r ansible/requirements.yml
+
+      - name: Versions utilisées
+        run: |
+          ansible --version
+          ansible-lint --version
+          ansible-galaxy collection list
+
+      # Le profil est imposé explicitement : sans lui, ansible-lint choisit le
+      # plus haut que le dépôt satisfait, et la barre baisserait en silence le
+      # jour où une règle commencerait à échouer.
+      - name: ansible-lint
+        run: ansible-lint --profile production
+
+      # Deux inventaires, deux jeux de variables. L'inventaire d'exemple porte
+      # des valeurs factices : il ne prouve pas le déploiement, seulement que le
+      # playbook reste analysable pour une cible réelle.
+      - name: Contrôle de syntaxe — inventaire de CI
+        working-directory: ansible
+        run: ansible-playbook -i inventory/ci.yml site.yml --syntax-check
+
+      - name: Contrôle de syntaxe — inventaire d'exemple
+        working-directory: ansible
+        run: ansible-playbook -i inventory/hosts.example.yml site.yml --syntax-check
+
+  # ── Garde-fou n°3 : les étages OpenTofu sont valides ──────────
+  tofu:
+    name: OpenTofu
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      # Version épinglée : `tofu fmt` peut changer d'avis d'une version à
+      # l'autre, et un formatage refusé sans qu'on ait rien touché est le
+      # meilleur moyen de faire ignorer la CI.
+      - name: Installer OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.10.6
+
+      # Portée limitée à tofu/ : à la racine, `-recursive` descend aussi dans
+      # les répertoires de données du service (data/, postgres-data/), qui
+      # appartiennent à root et n'ont rien à voir avec l'IaC.
+      - name: Formatage
+        run: tofu fmt -check -recursive -diff tofu/
+
+      # `-backend=false` : aucun état distant, aucune identification, aucun
+      # accès à une infrastructure. Seuls les fournisseurs sont téléchargés,
+      # aux sommes de contrôle du fichier de verrouillage — qui couvre
+      # linux_amd64 et linux_arm64, sans quoi ce job échouerait ici même.
+      - name: Valider chaque étage
+        run: |
+          set -e
+          for etage in tofu/*/; do
+            echo "::group::${etage}"
+            tofu -chdir="${etage}" init -backend=false -input=false
+            tofu -chdir="${etage}" validate
+            echo "::endgroup::"
+          done

@@ -16,8 +16,9 @@ Les trois guides restent la **référence explicative** — ils disent *pourquoi
 6. [Secrets — hors du dépôt, sans exception](#6-secrets--hors-du-dépôt-sans-exception)
 7. [Multi-architecture](#7-multi-architecture)
 8. [Reprise de l'existant](#8-reprise-de-lexistant)
-9. [Limites connues](#9-limites-connues)
-10. [Feuille de route](#10-feuille-de-route)
+9. [Éprouver le code : la CI GitHub](#9-éprouver-le-code--la-ci-github)
+10. [Limites connues](#10-limites-connues)
+11. [Feuille de route](#11-feuille-de-route)
 
 ---
 
@@ -110,14 +111,21 @@ secrets/
 ansible/
   ansible.cfg
   site.yml                    point d'entrée
+  requirements.yml            collections requises
   inventory/hosts.example.yml gabarit
   inventory/hosts.yml         ← ignoré par git
+  inventory/ci.yml            cible de la CI : le runner lui-même
   group_vars/all/main.yml     versions épinglées, ports, prérequis noyau
-  roles/                      à implémenter
+  group_vars/all/sites.yml    services publiés (références seules)
+  group_vars/ci/main.yml      surcharges de CI, valeurs fictives
+  roles/                      common, acme, nginx — la suite à implémenter
 tofu/
   00-cluster/                 ressources k3s
   10-forgejo/                 configuration de la forge
   20-analysis/                SonarQube + câblage
+.github/workflows/
+  iac-lint.yml                analyse statique, sans effet de bord
+  iac-converge.yml            déploiement réel sur runner jetable
 ```
 
 Le motif est constant : **un gabarit versionné, un fichier réel ignoré**. Il s'applique déjà à `.env-template` et se généralise ici.
@@ -171,7 +179,7 @@ La VM amd64 n'est pas un confort : c'est le **test de non-régression** du code.
 | Images de conteneurs | toutes multi-arch : `sonarqube:community`, `postgres:16-alpine`, `docker:27-dind`, `node:22-bookworm`, runner Forgejo |
 | sonar-scanner | le zip est par architecture (`linux-aarch64` / `linux-x64`) — à dériver des faits |
 | Providers OpenTofu | les quatre ont un binaire `linux_arm64`, vérifié |
-| `.terraform.lock.hcl` | ne contient que les empreintes de la plateforme courante. Pour piloter depuis un poste amd64 : `tofu providers lock -platform=linux_amd64 -platform=linux_arm64` |
+| `.terraform.lock.hcl` | verrouillé pour `linux_amd64` **et** `linux_arm64`, versionné ainsi. Un verrou mono-plateforme fait échouer `tofu init` sur l'autre — c'est ce que la CI amd64 aurait rencontré au premier essai. Après ajout d'un provider : `tofu providers lock -platform=linux_amd64 -platform=linux_arm64` |
 
 ## 8. Reprise de l'existant
 
@@ -181,23 +189,59 @@ Le critère de réussite est net : **un `tofu plan` qui ne propose aucun changem
 
 Les données ne sont jamais concernées : dépôts git, base PostgreSQL, volumes k3s et historique d'analyse restent intouchés.
 
-## 9. Limites connues
+## 9. Éprouver le code : la CI GitHub
+
+Deux workflows tournent sur le dépôt public. Ils ne touchent aucune machine réelle : la cible est le runner GitHub lui-même, une VM neuve détruite à la fin du job.
+
+| Workflow | Ce qu'il prouve | Durée |
+|---|---|---|
+| `iac-lint.yml` | le code est bien formé, aucun secret n'est versionné, les trois étages OpenTofu sont valides | ~2 min |
+| `iac-converge.yml` | le playbook amène une machine nue à l'état attendu, **deux fois de suite sans rien changer la seconde**, sur amd64 et sur arm64 | ~5 min |
+
+### Pourquoi un runner jetable est la bonne cible
+
+Ce dépôt promet une chose : reproduire l'infrastructure après une panne, sur une machine neuve. Un runner hébergé **est** cette machine neuve. Le tester revient à jouer le scénario de reprise à chaque commit, ce qu'aucune vérification sur le serveur en production ne peut faire — un serveur déjà configuré converge trivialement.
+
+### L'idempotence est le vrai test
+
+Le second passage doit rapporter `changed=0`. Un playbook qui « marche » mais rejoue les mêmes modifications à chaque exécution n'est pas de l'infrastructure comme code : c'est un script shell déguisé, qu'on n'ose plus relancer sur une machine en service. Le workflow échoue si le compteur n'est pas à zéro.
+
+### Ce que la convergence contrôle après coup
+
+`changed=0` prouve la convergence, pas le résultat. Le workflow regarde ensuite la machine elle-même : `vm.max_map_count`, le certificat et ses extensions, `nginx -t`, les ports en écoute, une requête TLS réelle sur chaque vhost, les règles UFW, et la jail `sshd` de fail2ban.
+
+Les deux vhosts doivent répondre **502**. C'est le résultat attendu, et il prouve davantage qu'un 200 : la terminaison TLS, le filtrage par IP et le relais fonctionnent — seul le service en amont, que ce playbook ne déploie pas, manque.
+
+### Les secrets, et leur absence
+
+Aucun secret n'est nécessaire, et aucun n'est configuré. Le mode `selfsigned` du rôle `acme` existe pour cela : émettre un vrai certificat exigerait le jeton DuckDNS d'un compte personnel, ce qui n'a pas sa place ici. Le mode auto-signé produit les mêmes fichiers aux mêmes chemins — de quoi éprouver le rôle `nginx` de bout en bout.
+
+Le job `secrets` de `iac-lint.yml` transforme la règle du §6 en contrôle exécutable : il refuse la livraison si un chemin interdit est suivi par git, ou si une clé privée age ou PEM apparaît dans le contenu d'un fichier versionné. Un `.gitignore` exprime une intention ; un `git add -f` la contourne. Ce job, non.
+
+### Ce que la CI ne peut pas prouver
+
+- **Le profil `raspberry_pi`.** Un runner arm64 partage l'architecture du Pi, pas son amorçage : `cgroup_enable=memory` dans `cmdline.txt` et le redémarrage qui suit ne se testent que sur une vraie carte.
+- **La reprise de l'existant.** Un runner part toujours d'une machine vierge. La convergence sur un hôte déjà configuré à la main — le cas de piserv — reste à éprouver ailleurs.
+- **Le chemin Let's Encrypt.** Sans jeton, l'émission DNS-01 n'est pas exercée ; seule la branche auto-signée l'est.
+
+## 10. Limites connues
 
 À traiter explicitement plutôt qu'à découvrir en route.
 
 - **Le jeton d'enregistrement du runner n'est pas exposé** par le provider Forgejo. Il devra être produit par un appel API et injecté dans SOPS — c'est le seul maillon non déclaratif de la chaîne.
 - **Deux providers sont communautaires et non signés.** `svalabs/forgejo` (~56 étoiles) et `jdamata/sonarqube` s'installent sans validation GPG. Le `.terraform.lock.hcl` épingle leurs empreintes, ce qui protège des substitutions ultérieures, mais la confiance initiale repose sur le registre.
-- **Ansible packagé par Debian 12 est en core 2.14**, sensiblement en retard. À réévaluer via `pipx` si un module récent venait à manquer.
+- **Ansible packagé par Debian 12 est en core 2.14**, sensiblement en retard. À réévaluer via `pipx` si un module récent venait à manquer. Conséquence directe : la CI tourne sur un `ansible-core` plus récent — 2.14 ne s'installe pas sur le Python 3.12 d'Ubuntu 24.04. Le vert en CI ne garantit donc pas le vert sur piserv ; le lint local, lui, s'exécute bien en 2.14.
 - **L'état OpenTofu contient les secrets en clair.** Il est exclu du dépôt ; il doit être inclus dans les sauvegardes et traité avec le même soin que la clé age. Un backend distant reste à arbitrer.
 - **Le mot de passe administrateur SonarQube ne peut pas être posé à la création** : le provider s'authentifie avec, alors que l'installation démarre sur `admin/admin`. Le changement initial restera à la charge d'Ansible.
 
-## 10. Feuille de route
+## 11. Feuille de route
 
 | Étape | Contenu | État |
 |---|---|---|
 | 0 | Outillage, chaîne SOPS/age, squelette, validation des providers en arm64 | **fait** |
 | 1 | Rôle `common` : paquets, sysctl, UFW, fail2ban | **fait** |
 | 2 | Rôles `acme` et `nginx` — **le mécanisme générique de publication d'un site** | **écrit, éprouvé à blanc** |
+| 2 bis | CI GitHub : lint, garde anti-secret, convergence réelle sur amd64 et arm64 | **fait** |
 | 3 | Rôles `docker` et `forgejo` : pile docker-compose | à faire |
 | 4 | Rôles `cgroup_pi` et `k3s` | à faire |
 | 5 | `tofu/00-cluster` : migration des manifestes de `k3s/` | à faire |
@@ -217,7 +261,9 @@ Le rôle `nginx` est **propriétaire** de `conf.d/00-rate-limit.conf` et le ré�
 [emerg] limit_req_zone "forgejo_login" is already bound to key "$binary_remote_addr"
 ```
 
-Côté fail2ban, **rien à faire**. `jail.d/` est fusionné par ordre alphabétique et les valeurs de `00-defaults.conf` sont identiques à celles du `local.conf` historique : la cohabitation est inerte. `local.conf` disparaîtra naturellement quand le rôle `forgejo` reprendra sa jail.
+Côté fail2ban, **rien à retirer**. `jail.d/` est fusionné par ordre alphabétique et `local.conf`, qui passe après `00-defaults.conf`, redéclare les mêmes valeurs : la cohabitation est inerte. `local.conf` disparaîtra naturellement quand le rôle `forgejo` reprendra sa jail.
+
+Une nuance depuis : `00-defaults.conf` apporte un réglage que `local.conf` n'a pas — `journalmatch` sur `ssh.service`. Comme `local.conf` ne redéfinit pas cette clé, elle survit à la fusion. Appliquer le rôle **changera donc le comportement de l'hôte**, dans le bon sens : la jail `sshd` de piserv, mesurée le 5 septembre 2026, ne compte aucun échec même après une authentification refusée, parce que le filtre fourni par fail2ban cherche `sshd.service` là où Debian nomme l'unité `ssh.service`. Détail dans [`roles/common/README.md`](ansible/roles/common/README.md).
 
 ---
 

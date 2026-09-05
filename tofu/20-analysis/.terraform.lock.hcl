@@ -5,6 +5,7 @@ provider "registry.opentofu.org/carlpett/sops" {
   version     = "1.4.1"
   constraints = "~> 1.2"
   hashes = [
+    "h1:HyIxpskyTiLdJhGFJYzCk45IsG7zMe3K+y7em3k23BE=",
     "h1:vmBW+4J2FkW/zuDesBHYHpS4eqGZveI43AHwvDczzSw=",
     "zh:4df8dea170a4cd926ca6ef0b9fa6fd1d8c1fa9bc9e78333d544a74c24e269cf9",
     "zh:5cf661333ec5d5cce3b7c0fc399052cf8f8c50f6cb0a50f5aec2f91d83685e1e",
@@ -20,6 +21,7 @@ provider "registry.opentofu.org/jdamata/sonarqube" {
   version     = "0.16.21"
   constraints = "~> 0.16"
   hashes = [
+    "h1:hHYjV7U7ymb+Znh1+wvXb/48dD4pFTNnF7Iy8TkPiiU=",
     "h1:jR2iZJWnSrnwLWaPBAAIY95Wgl1144n328cZFRkoe9U=",
     "zh:21650737f597132a0c460ceae926c3e02e90511fab9b030c3487f2508af02c14",
     "zh:285aeda778e8fca985621bf0a5a874e9b182c20ac691814ee9d728fdcc59ab73",
@@ -41,6 +43,7 @@ provider "registry.opentofu.org/svalabs/forgejo" {
   version     = "1.6.0"
   constraints = "~> 1.6"
   hashes = [
+    "h1:R8AgPWcDP8GQp16NdjGB8uvCQxGzdAdUY8mpraMTAak=",
     "h1:l+mewxOlp5Z0tfL+pgdqPuJOlYnjnPVIeYPNzpv0H4M=",
     "zh:336957908915b2aa74fa4f1ee2020f16a5738ba034da393521a2d70c31d2eb9b",
     "zh:41d632b7771b5580c847440c1cc745f08b8d98fabb3f314951e2b86debf232d7",
