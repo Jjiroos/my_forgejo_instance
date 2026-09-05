@@ -1,0 +1,17 @@
+---
+# Active le contrôleur cgroup `memory` sur Raspberry Pi. Sans lui, kubelet ne
+# peut appliquer aucune limite mémoire — donc aucun ResourceQuota, donc rien
+# de ce sur quoi repose la cohabitation des services sur cette machine.
+
+# Pi OS bookworm : /boot/firmware. Les versions antérieures : /boot.
+cgroup_pi_cmdline_file: /boot/firmware/cmdline.txt
+
+cgroup_pi_parameters:
+  - cgroup_enable=memory
+  - cgroup_memory=1
+
+# Redémarrer n'est jamais fait d'office. Le paramètre ne prend effet qu'au
+# prochain amorçage, et décider du moment où un serveur redémarre n'appartient
+# pas à un playbook. Le rôle écrit, signale, et s'arrête là.
+cgroup_pi_reboot: false
+cgroup_pi_reboot_timeout: 300

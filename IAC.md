@@ -118,7 +118,7 @@ ansible/
   group_vars/all/main.yml     versions épinglées, ports, prérequis noyau
   group_vars/all/sites.yml    services publiés (références seules)
   group_vars/ci/main.yml      surcharges de CI, valeurs fictives
-  roles/                      common, acme, nginx, docker, forgejo
+  roles/                      common, acme, nginx, docker, forgejo, cgroup_pi, k3s
 tofu/
   00-cluster/                 ressources k3s
   10-forgejo/                 configuration de la forge
@@ -216,6 +216,7 @@ Trois contrôles portent sur ce qui échoue silencieusement quand on ne le regar
 
 - **La forge est-elle accessible sans l'assistant web ?** Le job vérifie que le compte d'administration existe, créé en ligne de commande. Une instance verrouillée sans compte est une instance perdue.
 - **Le port applicatif est-il vraiment en loopback ?** `3000` doit apparaître lié à `127.0.0.1` et jamais à `0.0.0.0` — sinon tout le filtrage du vhost est contournable.
+- **Un pod peut-il encore sortir ?** UFW arrive en `deny (routed)` ; un pod qui ne peut plus joindre Internet ne peut ni cloner un dépôt ni installer une dépendance, c'est-à-dire qu'aucun job de CI ne fonctionne. Le contrôle se fait depuis un pod réel, seul endroit où la question se pose.
 - **La jail compte-t-elle réellement ?** Le job émet une authentification refusée à travers nginx, puis exige que `fail2ban-client status forgejo` rapporte au moins un échec. Une jail « active » qui compte zéro n'est pas une protection ; c'est exactement le défaut trouvé sur la jail `sshd`, et ce contrôle-là l'aurait attrapé.
 
 Pour que cette dernière mesure soit possible, la CI passe `ignoreself` à `false` et remplace `ignoreip` par un préfixe RFC 5737 : sans cela, toute tentative émise depuis le runner serait exemptée, et une jail muette resterait indiscernable d'une jail qui fonctionne.
@@ -230,7 +231,7 @@ Le job `secrets` de `iac-lint.yml` transforme la règle du §6 en contrôle exé
 
 ### Ce que la CI ne peut pas prouver
 
-- **Le profil `raspberry_pi`.** Un runner arm64 partage l'architecture du Pi, pas son amorçage : `cgroup_enable=memory` dans `cmdline.txt` et le redémarrage qui suit ne se testent que sur une vraie carte.
+- **Le profil `raspberry_pi`.** Un runner arm64 partage l'architecture du Pi, pas son amorçage : `cgroup_enable=memory` dans `cmdline.txt` et le redémarrage qui suit ne se testent que sur une vraie carte. Le rôle `cgroup_pi` est donc le seul du dépôt qu'aucune exécution de CI ne traverse — sa logique de calcul de la ligne noyau a été éprouvée séparément, sur les trois cas qui comptent : rien de présent, à moitié présent, déjà complet.
 - **La reprise de l'existant.** Un runner part toujours d'une machine vierge. La convergence sur un hôte déjà configuré à la main — le cas de piserv — reste à éprouver ailleurs.
 - **Le chemin Let's Encrypt.** Sans jeton, l'émission DNS-01 n'est pas exercée ; seule la branche auto-signée l'est.
 
@@ -253,7 +254,7 @@ Le job `secrets` de `iac-lint.yml` transforme la règle du §6 en contrôle exé
 | 2 | Rôles `acme` et `nginx` — **le mécanisme générique de publication d'un site** | **écrit, éprouvé à blanc** |
 | 2 bis | CI GitHub : lint, garde anti-secret, convergence réelle sur amd64 et arm64 | **fait** |
 | 3 | Rôles `docker` et `forgejo` : pile docker-compose, compte d'administration, jail | **fait** |
-| 4 | Rôles `cgroup_pi` et `k3s` | à faire |
+| 4 | Rôles `cgroup_pi` et `k3s` | **fait** |
 | 5 | `tofu/00-cluster` : migration des manifestes de `k3s/` | à faire |
 | 6 | `tofu/10-forgejo` et `tofu/20-analysis` — SonarQube devient le second site | à faire |
 | 7 | Import du piserv, jusqu'à un `plan` vide | à faire |

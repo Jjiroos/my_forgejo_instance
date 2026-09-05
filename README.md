@@ -58,7 +58,7 @@ fail2ban, le service systemd et le port-forward sont détaillés pas à pas dans
 | `SETUP-K3S.md` | guide du cluster k3s et des runners Forgejo Actions |
 | `SETUP-SONARQUBE.md` | guide du serveur SonarQube et de l'analyse en CI |
 | `IAC.md` | industrialisation Ansible + OpenTofu : frontière, étages, secrets |
-| `ansible/` | préparation de l'hôte — paquets, pare-feu, certificats, nginx, Docker, pile Forgejo |
+| `ansible/` | préparation de l'hôte — paquets, pare-feu, certificats, nginx, Docker, pile Forgejo, cluster k3s |
 | `tofu/` | configuration par API — cluster, Forgejo, SonarQube |
 | `secrets/` | **gabarits seuls, sans aucune valeur.** Les fichiers chiffrés restent hors du dépôt — cf. [IAC.md §6](IAC.md#6-secrets--hors-du-dépôt-sans-exception) |
 | `docker-compose.yml` | services `forgejo` + `db`, paramétrés par `.env` |

@@ -253,6 +253,33 @@ jobs:
           fi
           echo "Jail forgejo : ${comptes} échec(s) comptabilisé(s)."
 
+      - name: Vérifier le cluster k3s
+        run: |
+          sudo k3s kubectl get nodes -o wide
+          sudo k3s kubectl wait --for=condition=Ready node --all --timeout=120s
+
+          echo "--- traefik et servicelb doivent être absents"
+          ! sudo k3s kubectl -n kube-system get deploy traefik >/dev/null 2>&1
+          echo "--- metrics-server et local-path doivent être là"
+          sudo k3s kubectl -n kube-system get deploy metrics-server >/dev/null
+          sudo k3s kubectl -n kube-system get deploy local-path-provisioner >/dev/null
+
+          echo "--- règles UFW des réseaux internes"
+          sudo ufw status | grep -q '10.42.0.0/16'
+          sudo ufw status | grep -q '10.43.0.0/16'
+
+      # Le piège documenté : UFW arrive en `deny (routed)`, et un pod qui ne
+      # peut plus sortir ne peut ni cloner un dépôt ni installer une
+      # dépendance — c'est-à-dire qu'aucun job de CI ne fonctionne. Le test se
+      # fait depuis un pod réel, seul endroit où la question se pose.
+      - name: Vérifier la sortie réseau depuis un pod
+        run: |
+          sudo k3s kubectl run essai-egress --rm -i --restart=Never \
+            --image=curlimages/curl:8.11.1 --command -- \
+            curl -sS -m 25 -o /dev/null -w 'egress HTTP %{http_code}\n' \
+            https://api.github.com/ | tee /tmp/egress.txt
+          grep -q 'egress HTTP 200' /tmp/egress.txt
+
       - name: Vérifier le pare-feu
         run: |
           sudo ufw status verbose
@@ -301,6 +328,11 @@ jobs:
           echo "::endgroup::"
           echo "::group::journal de la forge"
           sudo tail -n 80 /srv/forgejo/data/gitea/log/gitea.log || true
+          echo "::endgroup::"
+          echo "::group::k3s"
+          sudo k3s kubectl get nodes -o wide || true
+          sudo k3s kubectl get pods -A || true
+          sudo journalctl -u k3s --no-pager -n 60 || true
           echo "::endgroup::"
           echo "::group::jails fail2ban"
           sudo fail2ban-client status || true

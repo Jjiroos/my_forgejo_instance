@@ -1,0 +1,115 @@
+---
+# kubelet a besoin du contrôleur cgroup `memory` pour appliquer la moindre
+# limite. Sur un Pi sans le réglage du rôle cgroup_pi, k3s démarre quand même
+# — et tous les ResourceQuota deviennent décoratifs. Mieux vaut s'arrêter ici.
+- name: Vérifier le contrôleur cgroup mémoire
+  ansible.builtin.slurp:
+    src: /sys/fs/cgroup/cgroup.controllers
+  register: k3s_cgroup_controllers
+
+- name: Refuser d'installer sans contrôleur mémoire
+  ansible.builtin.assert:
+    that: "'memory' in (k3s_cgroup_controllers.content | b64decode).split()"
+    fail_msg: >-
+      Le contrôleur cgroup `memory` est absent. k3s s'installerait, mais aucune
+      limite mémoire ne serait applicable et les ResourceQuota n'auraient aucun
+      effet. Sur Raspberry Pi, appliquer le rôle cgroup_pi puis redémarrer.
+    quiet: true
+
+# ── Installation ──────────────────────────────────────────────
+- name: Relever la version de k3s déjà installée
+  ansible.builtin.command:
+    cmd: k3s --version
+  register: k3s_installed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Récupérer le script d'installation
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: "{{ k3s_install_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: k3s_version not in (k3s_installed.stdout | default(''))
+
+# Le script est idempotent par accident, pas par contrat : relancé, il
+# retélécharge et réinstalle. La garde de version évite un `changed` à chaque
+# convergence et surtout un redémarrage du cluster sans raison.
+- name: Installer k3s
+  ansible.builtin.command:
+    cmd: "{{ k3s_install_script }}"
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: >-
+      server
+      {{ k3s_disabled_components | map('regex_replace', '^', '--disable ') | join(' ') }}
+      --node-name {{ k3s_node_name }}
+      --write-kubeconfig-mode {{ k3s_kubeconfig_mode }}
+      {{ k3s_extra_server_args | join(' ') }}
+  when: k3s_version not in (k3s_installed.stdout | default(''))
+  changed_when: true
+
+# ── Pare-feu ──────────────────────────────────────────────────
+# UFW arrive en `deny (routed)`, ce qui coupe le trafic sortant des pods :
+# impossible de cloner un dépôt ou d'installer une dépendance dans un job.
+# Attention à ne pas en déduire l'inverse — k3s insère ses propres règles
+# avant celles d'UFW dans FORWARD, un hostPort n'est donc pas filtrable par
+# UFW (cf. SETUP-SONARQUBE.md §7).
+- name: Ouvrir les réseaux internes de k3s dans UFW
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ item.cidr }}"
+    comment: "{{ item.comment }}"
+  loop:
+    - { cidr: "{{ k3s_pod_cidr }}",     comment: "k3s pods" }
+    - { cidr: "{{ k3s_service_cidr }}", comment: "k3s services" }
+  loop_control:
+    label: "{{ item.comment }} — {{ item.cidr }}"
+
+# ── Démarrage ─────────────────────────────────────────────────
+- name: Activer k3s
+  ansible.builtin.systemd:
+    name: k3s
+    enabled: true
+    state: started
+
+- name: Attendre que le nœud soit prêt
+  ansible.builtin.command:
+    cmd: "k3s kubectl wait --for=condition=Ready node --all --timeout={{ k3s_ready_timeout }}s"
+  register: k3s_ready
+  changed_when: false
+  check_mode: false
+
+# ── Accès administrateur ──────────────────────────────────────
+# Sans KUBECONFIG, le kubectl de k3s lit /etc/rancher/k3s/k3s.yaml, illisible
+# par un compte ordinaire : `permission denied` là où on attendait une erreur
+# de cluster.
+- name: Relever le répertoire personnel des comptes visés
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ item }}"
+  loop: "{{ k3s_kubeconfig_users }}"
+  register: k3s_admin_accounts
+
+- name: Créer le répertoire .kube
+  ansible.builtin.file:
+    path: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.kube"
+    state: directory
+    owner: "{{ item.item }}"
+    mode: "0700"
+  loop: "{{ k3s_admin_accounts.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Déposer le kubeconfig
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.kube/config"
+    remote_src: true
+    owner: "{{ item.item }}"
+    mode: "0600"
+  loop: "{{ k3s_admin_accounts.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"

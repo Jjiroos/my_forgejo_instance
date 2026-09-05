@@ -1,0 +1,70 @@
+---
+# Le firmware du Pi injecte `cgroup_disable=memory` dans la ligne de commande
+# du noyau — et ce paramètre n'apparaît nulle part dans cmdline.txt, ce qui
+# rend le diagnostic déroutant. Les paramètres ajoutés en fin de ligne passent
+# après ceux du firmware et le neutralisent.
+- name: Relever les contrôleurs cgroup actifs
+  ansible.builtin.slurp:
+    src: /sys/fs/cgroup/cgroup.controllers
+  register: cgroup_pi_controllers
+
+- name: Lire la ligne de commande du noyau
+  ansible.builtin.slurp:
+    src: "{{ cgroup_pi_cmdline_file }}"
+  register: cgroup_pi_cmdline
+
+- name: Établir ce qui manque
+  ansible.builtin.set_fact:
+    cgroup_pi_current: "{{ cgroup_pi_cmdline.content | b64decode | trim }}"
+    cgroup_pi_memory_active: "{{ 'memory' in (cgroup_pi_controllers.content | b64decode).split() }}"
+    cgroup_pi_missing: "{{ cgroup_pi_parameters | reject('in', (cgroup_pi_cmdline.content | b64decode).split()) | list }}"
+
+# Le fichier doit rester sur UNE seule ligne, sans retour final : le firmware
+# ne lit que la première, et un `\n` de trop coupe silencieusement tout ce qui
+# suit. D'où `content` sans saut de ligne plutôt qu'un lineinfile.
+- name: Ajouter les paramètres manquants en fin de ligne
+  ansible.builtin.copy:
+    content: "{{ ([cgroup_pi_current] + cgroup_pi_missing) | join(' ') }}"
+    dest: "{{ cgroup_pi_cmdline_file }}"
+    owner: root
+    group: root
+    mode: "0755"
+    backup: true
+  when: cgroup_pi_missing | length > 0
+  register: cgroup_pi_written
+
+- name: Contrôler que le fichier tient toujours sur une ligne
+  ansible.builtin.command:
+    cmd: "wc -l {{ cgroup_pi_cmdline_file }}"
+  register: cgroup_pi_lines
+  changed_when: false
+  check_mode: false
+
+- name: Refuser un cmdline.txt sur plusieurs lignes
+  ansible.builtin.assert:
+    that: cgroup_pi_lines.stdout.split()[0] | int == 0
+    fail_msg: >-
+      {{ cgroup_pi_cmdline_file }} contient un retour à la ligne. Le firmware
+      ne lit que la première ligne : la machine redémarrerait sans les
+      paramètres qui suivent. Restaurer la sauvegarde
+      {{ cgroup_pi_written.backup_file | default('.bak') }} avant tout
+      redémarrage.
+    quiet: true
+
+- name: Redémarrer pour appliquer les paramètres du noyau
+  ansible.builtin.reboot:
+    reboot_timeout: "{{ cgroup_pi_reboot_timeout }}"
+  when:
+    - cgroup_pi_written.changed | default(false)
+    - cgroup_pi_reboot
+
+- name: Signaler qu'un redémarrage reste à faire
+  ansible.builtin.debug:
+    msg: >-
+      Les paramètres du noyau ont été écrits mais ne sont pas actifs : le
+      contrôleur cgroup `memory` n'apparaîtra qu'après un redémarrage. Sans
+      lui, k3s démarre mais aucune limite mémoire n'est applicable. Redémarrer
+      puis vérifier avec `cat /sys/fs/cgroup/cgroup.controllers`.
+  when:
+    - not cgroup_pi_memory_active
+    - not (cgroup_pi_reboot and cgroup_pi_written.changed | default(false))

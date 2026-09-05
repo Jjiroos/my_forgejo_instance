@@ -14,6 +14,9 @@
     - { role: nginx,   tags: [nginx, tls] }
     - { role: docker,  tags: [docker] }
     - { role: forgejo, tags: [forgejo] }
-    # À implémenter, dans cet ordre de dépendance :
-    # - cgroup_pi    cgroup_enable=memory dans cmdline.txt (Pi uniquement, reboot)
-    # - k3s          installation du cluster mono-nœud
+    # Spécifique au matériel : un arm64 générique partage l'architecture du Pi,
+    # pas son amorçage. Le contrôleur cgroup mémoire y est déjà actif.
+    - role: cgroup_pi
+      tags: [cgroup_pi]
+      when: host_profile == 'raspberry_pi'
+    - { role: k3s, tags: [k3s] }

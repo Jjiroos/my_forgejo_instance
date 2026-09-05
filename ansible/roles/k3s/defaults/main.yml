@@ -1,0 +1,35 @@
+---
+# Cluster k3s mono-nœud. La version vient de group_vars/all/main.yml, épinglée
+# comme les images : un cluster reconstruit six mois plus tard doit être le
+# même cluster, pas le dernier en date.
+
+k3s_node_name: "{{ ansible_hostname }}"
+k3s_kubeconfig_mode: "640"
+
+# Ce qui est désactivé, et ce qui ne l'est pas.
+#   traefik   — nginx fronte déjà tout, aucun Ingress n'est nécessaire
+#   servicelb — pas de LoadBalancer sur un nœud unique
+# metrics-server et local-path sont conservés : le premier pour `kubectl top`,
+# indispensable pour piloter la RAM sur une petite machine ; le second pour les
+# volumes persistants du runner et de SonarQube.
+k3s_disabled_components:
+  - traefik
+  - servicelb
+
+k3s_extra_server_args: []
+
+# Réseaux internes par défaut de k3s. Déclarés ici parce que le pare-feu doit
+# les connaître, pas parce qu'on les change.
+k3s_pod_cidr: 10.42.0.0/16
+k3s_service_cidr: 10.43.0.0/16
+
+k3s_ready_timeout: 300
+
+# Comptes pour lesquels déposer un kubeconfig utilisable sans sudo. Vide par
+# défaut : `k3s kubectl` fonctionne toujours en root, et copier les
+# identifiants du cluster dans un répertoire personnel est une décision.
+k3s_kubeconfig_users: []
+
+# Le script d'installation est téléchargé puis exécuté, jamais tubé dans un
+# shell : ce qui est exécuté doit pouvoir être relu et retrouvé sur la machine.
+k3s_install_script: /usr/local/share/k3s-install.sh
