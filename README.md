@@ -24,13 +24,16 @@ SSH Forgejo désactivé, clones en HTTPS + access token.
 
 ```
 Internet ──:8181──► box (port-forward) ──► serveur ──► nginx (TLS) ──► 127.0.0.1:3000 ──► Forgejo ──► PostgreSQL
-                                                                                            ▲
-                    ┌──────────────────────── k3s (mono-nœud) ────────────────────────┐    │
-                    │  runner Actions ──► Docker-in-Docker ──► conteneurs de job ──────┼────┘
-                    │                                              │                  │
-                    │  SonarQube ◄── LAN uniquement ────────────────┘                  │
-                    └───────────────────────────────────────────────────────────────────┘
-        Seul le 8181 est exposé publiquement. Le reste ne sort jamais du réseau local.
+                                                          │                                 ▲
+    poste admin (LAN) ──:9443── TLS ──────────────────────┤                                 │
+                                                          │                                 │
+                    ┌───────── k3s (mono-nœud) ───────────┼───────────────────────────┐     │
+                    │  runner Actions ──► Docker-in-Docker ──► conteneurs de job ──────┼─────┘
+                    │                                     │        │                  │
+                    │  SonarQube ◄────────────────────────┘────────┘                  │
+                    └─────────────────────────────────────────────────────────────────┘
+        Seul le 8181 est exposé publiquement. Le 9443 est réservé au poste
+        d'administration ; le reste ne sort jamais du réseau local.
 ```
 
 ## Démarrage rapide

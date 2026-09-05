@@ -27,18 +27,26 @@ spec:
     - Ingress
   ingress:
     - from:
-        # Poste d'administration — le seul du LAN à pouvoir ouvrir l'IHM.
-        - ipBlock:
-            cidr: ${ADMIN_WORKSTATION_IP}/32
-        # Conteneurs de job de la CI. Ils joignent SonarQube par l'IP LAN du
-        # nœud : au moment où la politique est évaluée, la source est encore
-        # l'IP du pod runner (la traduction hairpin n'a lieu qu'en POSTROUTING,
-        # après le filtrage). Sans cette entrée, toute analyse échoue.
+        # Conteneurs de job de la CI — le seul accès direct au port 9000.
+        #
+        # Ils joignent SonarQube par l'IP LAN du nœud, mais au moment où la
+        # politique est évaluée la source est encore l'IP du pod runner : la
+        # traduction hairpin n'a lieu qu'en POSTROUTING, après le filtrage.
+        # Sans cette entrée, toute analyse échoue.
+        #
+        # Le trafic reste interne à la machine ; le scanner n'envoie pas de mot
+        # de passe mais un jeton d'analyse à portée limitée.
         - ipBlock:
             cidr: 10.42.0.0/16
       ports:
         - protocol: TCP
           port: 9000
+
+  # Aucun poste du LAN ne figure ici, volontairement : les navigateurs passent
+  # par le vhost nginx TLS (port 9443), dont le trafic sort du nœud lui-même et
+  # bénéficie donc du `--src-type LOCAL -j ACCEPT` posé en amont par
+  # kube-router. Le port 9000 en clair n'est plus joignable depuis le réseau.
+  # ${ADMIN_WORKSTATION_IP} est désormais filtré par nginx et UFW.
 ---
 # La base ne doit être jointe que par SonarQube, jamais depuis le LAN.
 apiVersion: networking.k8s.io/v1

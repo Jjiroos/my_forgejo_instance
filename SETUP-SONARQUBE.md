@@ -32,13 +32,18 @@ Déploiement d'un **SonarQube Community** sur le cluster k3s monté par [SETUP-K
 L'architecture retenue :
 
 ```
-   navigateur (LAN) ─────────┐
-                             ├──► http://<IP_LAN>:9000 ──► pod sonarqube ──► pod postgres
-   conteneur de job CI ──────┘         (hostPort lié à l'IP LAN,
-                                        jamais 0.0.0.0, jamais Internet)
+   navigateur          https        nginx (hôte)      http
+   du poste admin ─────────────► :9443 ─────────────────────┐
+                                 TLS + UFW + allow/deny     │
+                                                            ├──► pod sonarqube ──► pod postgres
+   conteneur         http  hostPort :9000                   │
+   de job CI ──────────────────► lié à l'IP LAN ────────────┘
+                                 NetworkPolicy
 ```
 
-SonarQube n'est **pas** exposé publiquement : rien n'est ajouté au port-forward de la box, et le `hostPort` est lié à la seule IP LAN du nœud — même le loopback de la machine ne l'atteint pas.
+Deux chemins, deux filtres, et c'est délibéré : le navigateur passe par **TLS**, la CI attaque le port interne en direct. Le port 9000 n'est joignable ni depuis le LAN ni depuis Internet.
+
+SonarQube n'est **pas** exposé publiquement : ni 9000 ni 9443 ne sont redirigés par la box, et les deux écoutes sont liées à la seule IP LAN du nœud — même le loopback de la machine ne les atteint pas.
 
 ---
 
@@ -96,7 +101,9 @@ Trois décisions qui méritent une explication :
 
 ## 4. Première connexion et token CI
 
-Le compte par défaut est `admin` / `admin`. **À changer immédiatement** : le service est joignable depuis n'importe quel appareil du LAN.
+Le compte par défaut est `admin` / `admin`. **À changer immédiatement.**
+
+> Les commandes de cette section s'exécutent **depuis le serveur**, sur le port 9000 en clair. C'est le seul moment où c'est nécessaire : une fois le vhost TLS en place ([§7](#7-utiliser-et-paramétrer-le-serveur)), l'accès navigateur passe par HTTPS et le port 9000 n'est plus joignable depuis le réseau.
 
 ```bash
 curl -u admin:admin -X POST "http://<IP_LAN>:9000/api/users/change_password" \
@@ -229,15 +236,94 @@ Le workflow lance cppcheck, convertit son XML au format *generic issue*, puis pa
 
 ## 7. Utiliser et paramétrer le serveur
 
-### Accéder à l'interface — et ce qui la protège vraiment
+### Accéder à l'interface
 
-L'interface s'ouvre dans un navigateur depuis n'importe quelle machine du LAN :
+L'accès nominal se fait **en HTTPS**, via un vhost nginx qui termine le TLS et relaie vers le port 9000 :
 
 ```
-http://<IP_LAN>:9000
+https://<SOUS_DOMAINE>.duckdns.org:9443
 ```
 
-**`http://localhost:9000` ne fonctionne pas, même depuis le serveur lui-même.** Le `hostPort` est lié à l'IP LAN précise et non à `0.0.0.0` : c'est ce qui garantit que le service ne peut pas être exposé par erreur, mais il faut donc toujours viser l'IP.
+Le port 9000 en clair n'est **plus joignable depuis le réseau** : il ne sert plus qu'aux conteneurs de job de la CI et au serveur lui-même.
+
+Le certificat ne couvrant qu'un seul nom, le poste client doit résoudre ce nom vers l'IP LAN — le port 9443 n'étant pas redirigé par la box, passer par l'IP publique ne mène nulle part. Une ligne dans le fichier `hosts` du poste suffit :
+
+```
+<IP_LAN>    <SOUS_DOMAINE>.duckdns.org
+```
+
+> Sous Windows : `C:\Windows\System32\drivers\etc\hosts`, à éditer en administrateur. Sous Linux/macOS : `/etc/hosts`.
+
+À défaut, `https://<IP_LAN>:9443` fonctionne aussi — la connexion est chiffrée, mais le navigateur avertit que le nom du certificat ne correspond pas.
+
+### Le vhost TLS
+
+Il réutilise le certificat de la forge : même nom d'hôte, donc **aucune automatisation supplémentaire** — le cron acme.sh existant le renouvelle et recharge nginx.
+
+`/etc/nginx/sites-available/sonarqube` :
+
+```nginx
+server {
+    listen <IP_LAN>:9443 ssl http2;      # port délibérément NON redirigé par la box
+    server_name <SOUS_DOMAINE>.duckdns.org;
+
+    ssl_certificate     /etc/nginx/ssl/forgejo.crt;
+    ssl_certificate_key /etc/nginx/ssl/forgejo.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    access_log /var/log/nginx/sonarqube-access.log;
+    error_log  /var/log/nginx/sonarqube-error.log;
+
+    allow <IP_POSTE_ADMIN>;              # poste d'administration
+    allow <IP_LAN>;                      # le serveur lui-même
+    deny  all;
+
+    server_tokens off;
+    client_max_body_size 50m;            # rapports d'analyse volumineux
+    proxy_read_timeout   600s;
+    proxy_send_timeout   600s;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Frame-Options          DENY                always;
+    add_header X-Content-Type-Options   nosniff             always;
+    add_header Referrer-Policy          strict-origin-when-cross-origin always;
+
+    location / {
+        proxy_pass http://<IP_LAN>:9000;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/sonarqube /etc/nginx/sites-enabled/sonarqube
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+> `http2 on;` est une directive de nginx ≥ 1.25. Sur les versions antérieures, c'est `listen … ssl http2` — la forme utilisée ci-dessus, valable partout.
+
+Déclarer enfin l'URL publique côté SonarQube, sinon les liens qu'il génère pointent sur son adresse interne :
+
+```bash
+curl -u admin:<MDP> -X POST "http://<IP_LAN>:9000/api/settings/set" \
+  --data-urlencode "key=sonar.core.serverBaseURL" \
+  --data-urlencode "value=https://<SOUS_DOMAINE>.duckdns.org:9443"
+```
+
+### Ce qui protège le service — deux filtres, deux mécanismes
+
+C'est le point le moins intuitif de cette installation : **le pare-feu ne s'applique pas au même endroit selon le chemin emprunté.**
+
+| Chemin | Nature | Filtre efficace |
+|---|---|---|
+| `:9443` → nginx | socket sur l'hôte → chaîne `INPUT` | **UFW** |
+| `:9000` → `hostPort` k3s | DNAT vers le pod → chaîne `FORWARD` | **NetworkPolicy** |
 
 > ⚠️ **UFW ne filtre pas un `hostPort` k3s.** Le trafic est DNAT vers le pod, donc il traverse `FORWARD`, où k3s insère ses règles **avant** celles d'UFW :
 >
@@ -247,31 +333,40 @@ http://<IP_LAN>:9000
 >         → ... ufw-before-forward ...            ← jamais atteint
 > ```
 >
-> Le port est donc joignable depuis tout le LAN **bien qu'aucune règle UFW ne l'autorise** et que la politique soit `deny (routed)`. Ajouter ou retirer une règle UFW pour ce port n'a aucun effet. Vérifier soi-même avant de conclure :
+> Une règle UFW sur le port 9000 n'a **aucun effet**. Vérifier soi-même avant de conclure :
 >
 > ```bash
 > sudo iptables -S FORWARD | head
 > sudo iptables -S KUBE-POD-FW-<hash>      # le hash vient de KUBE-ROUTER-FORWARD
 > ```
 
-Ce qui protège réellement le service :
+Le dispositif complet :
 
 | Garde-fou | Effet |
 |---|---|
-| `hostIP: <IP_LAN>` dans le manifeste | jamais exposé au-delà du réseau local |
-| Aucune redirection de port sur la box | inaccessible depuis Internet |
+| Aucune redirection de 9443 ni 9000 sur la box | inaccessible depuis Internet |
+| `listen <IP_LAN>:9443` et `hostIP: <IP_LAN>` | jamais exposé au-delà du réseau local |
+| Règle UFW sur 9443 | seul le poste d'administration atteint nginx |
+| `allow` / `deny all` dans le vhost | second verrou, indépendant d'UFW |
+| `NetworkPolicy sonarqube-ingress` | 9000 réservé aux conteneurs de job |
+| `NetworkPolicy sonarqube-db-ingress` | PostgreSQL réservé au pod SonarQube |
 | `sonar.forceAuthentication=true` (défaut) | API en `401` sans identifiants |
-| `NetworkPolicy sonarqube-ingress` | **seul** filtre efficace par adresse source |
+| TLS sur 9443 | le mot de passe ne circule plus en clair |
 
-#### Restreindre l'accès à certaines machines
+```bash
+sudo ufw allow from <IP_POSTE_ADMIN> to any port 9443 proto tcp comment 'SonarQube TLS'
+```
 
-UFW étant inopérant ici, le filtrage se fait par `NetworkPolicy` — c'est kube-router qui les applique, et c'est lui qui décide sur ce chemin. `k3s/sonarqube/30-networkpolicy.yaml` n'autorise l'IHM que depuis le poste d'administration déclaré dans `.env` :
+Les deux verrous du chemin HTTPS sont volontairement redondants : une règle UFW et une directive nginx ne tombent pas en panne pour les mêmes raisons.
+
+#### La NetworkPolicy
+
+`k3s/sonarqube/30-networkpolicy.yaml` réserve le port 9000 aux conteneurs de job :
 
 ```yaml
   ingress:
     - from:
-        - ipBlock: { cidr: ${ADMIN_WORKSTATION_IP}/32 }   # poste d'administration
-        - ipBlock: { cidr: 10.42.0.0/16 }                 # conteneurs de job (CI)
+        - ipBlock: { cidr: 10.42.0.0/16 }    # conteneurs de job (CI)
       ports:
         - { protocol: TCP, port: 9000 }
 ```
@@ -279,30 +374,26 @@ UFW étant inopérant ici, le filtrage se fait par `NetworkPolicy` — c'est kub
 Deux points qui ne sont pas évidents :
 
 - **Le CIDR des pods est indispensable.** Les conteneurs de job joignent SonarQube par l'IP LAN du nœud, mais au moment où la politique est évaluée la source est encore l'IP du pod runner : la traduction *hairpin* n'a lieu qu'en `POSTROUTING`, après le filtrage. Sans cette entrée, **toute analyse échoue**.
-- **Impossible de se verrouiller dehors.** kube-router place un `--src-type LOCAL -j ACCEPT` en amont de la chaîne de politique : le serveur lui-même garde l'accès, et les sondes du kubelet continuent de passer.
-
-Une seconde politique restreint PostgreSQL au seul pod SonarQube.
+- **Impossible de se verrouiller dehors.** kube-router place un `--src-type LOCAL -j ACCEPT` en amont de la chaîne de politique. Le serveur garde l'accès, les sondes du kubelet passent, et c'est aussi ce qui permet à nginx — qui émet depuis le nœud — de relayer sans figurer dans la politique.
 
 Vérifier que le filtrage mord vraiment — une politique qui n'est pas testée ne prouve rien :
 
 ```bash
-# 1. retirer temporairement le CIDR des pods
-kubectl -n sonarqube patch networkpolicy sonarqube-ingress --type json \
-  -p '[{"op":"remove","path":"/spec/ingress/0/from/1"}]'
-
-# 2. depuis un conteneur de job : doit échouer (code curl 7)
+# depuis un conteneur de job, en HTTPS : doit être refusé par nginx (403)
 kubectl -n forgejo-actions exec forgejo-runner-0 -c dind -- \
   docker run --rm --network bridge curlimages/curl:8.11.1 \
-  -s -m 8 -o /dev/null -w '%{http_code}\n' http://<IP_LAN>:9000/api/system/status
+  -sk -o /dev/null -w '%{http_code}\n' https://<IP_LAN>:9443/api/system/status
 
-# 3. depuis le serveur : doit toujours répondre 200
-curl -s -o /dev/null -w '%{http_code}\n' http://<IP_LAN>:9000/api/system/status
+# le même conteneur, en direct sur 9000 : doit passer (200), sinon la CI casse
+kubectl -n forgejo-actions exec forgejo-runner-0 -c dind -- \
+  docker run --rm --network bridge curlimages/curl:8.11.1 \
+  -s -o /dev/null -w '%{http_code}\n' http://<IP_LAN>:9000/api/system/status
 
-# 4. restaurer
-set -a && . ./.env && set +a && ./k3s/apply.sh sonarqube
+# retirer temporairement la seule entrée autorisée, re-tester : doit échouer
+kubectl -n sonarqube patch networkpolicy sonarqube-ingress --type json \
+  -p '[{"op":"remove","path":"/spec/ingress/0/from/0"}]'
+set -a && . ./.env && set +a && ./k3s/apply.sh sonarqube     # restaurer
 ```
-
-**L'accès est en HTTP, pas HTTPS** : le mot de passe circule en clair sur le réseau local. Le durcissement est un vhost nginx TLS réutilisant le certificat existant, sur un port non redirigé par la box.
 
 ### Les deux couches de paramétrage
 
@@ -459,6 +550,32 @@ docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
 ```
 
 L'échec est immédiat (moins d'une seconde) : si le job tombe tout de suite après le démarrage du scanner, c'est cette piste-là, pas la connectivité.
+
+### Plus d'accès à l'IHM depuis le poste d'administration
+
+Prendre les couches dans l'ordre, de la plus externe à la plus interne.
+
+```bash
+# 1. nginx écoute-t-il ? (depuis le serveur)
+ss -lnt | grep 9443
+
+# 2. le vhost répond-il localement ?
+curl -sk -o /dev/null -w '%{http_code}\n' https://<IP_LAN>:9443/api/system/status
+
+# 3. UFW laisse-t-il passer le poste ?
+sudo ufw status | grep 9443
+
+# 4. nginx a-t-il refusé la requête ? (403 = allow/deny du vhost)
+sudo tail -5 /var/log/nginx/sonarqube-error.log
+```
+
+Causes fréquentes, par ordre de probabilité :
+
+- **L'IP du poste a changé.** C'est le point fragile du dispositif : elle est écrite en dur dans la règle UFW *et* dans le vhost. Un bail DHCP statique sur la box évite le problème définitivement. Après changement, mettre à jour `ADMIN_WORKSTATION_IP` dans `.env`, la directive `allow` du vhost, et la règle UFW.
+- **Le nom ne résout pas vers l'IP LAN.** Le port 9443 n'étant pas redirigé, passer par l'IP publique ne mène nulle part. Vérifier l'entrée `hosts` du poste. En dépannage immédiat, `https://<IP_LAN>:9443` fonctionne malgré l'avertissement de certificat.
+- **Le certificat a expiré.** `sudo openssl x509 -in /etc/nginx/ssl/forgejo.crt -noout -dates`. Le renouvellement est porté par le cron acme.sh de la forge — si la forge est en HTTPS valide, SonarQube l'est aussi.
+
+En dernier recours, le serveur lui-même conserve toujours l'accès direct : `curl http://<IP_LAN>:9000/…` depuis une session SSH. kube-router garantit ce chemin, il ne peut pas être coupé par une politique.
 
 ### Le job CI ne joint pas SonarQube
 
