@@ -12,7 +12,13 @@
 # .conf.backup ou .bak — que nginx ignore — et déclencherait un faux conflit.
 - name: Relever les zones déjà déclarées ailleurs dans conf.d
   ansible.builtin.shell:
+    # `pipefail` pour que l'échec de grep ne soit pas masqué par le succès de
+    # sort ; il faut bash pour cela, dash ne connaît pas l'option. Le `|| true`
+    # final reste nécessaire : grep sort en 1 quand il ne trouve rien, ce qui
+    # est le cas normal sur une machine neuve.
+    executable: /bin/bash
     cmd: >-
+      set -o pipefail;
       grep -hoP '(?<=zone=)[A-Za-z0-9_]+(?=:)' /etc/nginx/conf.d/*.conf
       --exclude={{ nginx_rate_limit_file | basename | quote }} 2>/dev/null | sort -u || true
   register: nginx_existing_zones

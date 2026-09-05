@@ -1,9 +1,11 @@
 # Configuration yamllint, consommée aussi par ansible-lint.
 #
-# Trois assouplissements d'espacement, tous pour la même raison : l'alignement
-# des valeurs et les dictionnaires courts sur une ligne rendent un fichier de
-# variables nettement plus lisible. Tout le reste est laissé aux valeurs par
-# défaut, y compris l'exigence d'un `---` en tête de document.
+# Deux blocs. D'abord trois assouplissements d'espacement, tous pour la même
+# raison : l'alignement des valeurs et les dictionnaires courts sur une ligne
+# rendent un fichier de variables nettement plus lisible. Ensuite quatre
+# réglages qu'ansible-lint impose à toute configuration yamllint qu'il accepte.
+# Tout le reste est laissé aux valeurs par défaut, y compris l'exigence d'un
+# `---` en tête de document.
 extends: default
 
 rules:
@@ -16,3 +18,16 @@ rules:
   line-length: disable        # les commentaires explicatifs priment
   truthy:
     allowed-values: ["true", "false"]
+
+  # ── Exigences d'ansible-lint ────────────────────────────────────
+  # Ces quatre valeurs ne sont pas un choix de style : ansible-lint refuse une
+  # configuration yamllint qui s'en écarte, et se prive alors de son mode
+  # correction automatique. Elles vont dans le même sens que le reste —
+  # `0644` doit rester une chaîne, jamais un octal que YAML relirait de
+  # travers.
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true

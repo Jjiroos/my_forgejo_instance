@@ -69,8 +69,14 @@ jobs:
         with:
           python-version: '3.12'
 
+      # Version figée, et c'est délibéré. Les collections de requirements.yml
+      # ont des planchers parce qu'elles décrivent un comportement d'exécution
+      # stable ; un linter, lui, change ce que « vert » veut dire à chaque
+      # version qui durcit une règle. Une CI dont le verdict bouge sans qu'une
+      # ligne du dépôt n'ait changé n'apprend plus rien. Montée de version =
+      # commit dédié, avec les corrections que la nouvelle règle impose.
       - name: Installer l'outillage
-        run: pip install --disable-pip-version-check ansible-core ansible-lint
+        run: pip install --disable-pip-version-check 'ansible-lint==26.8.0'
 
       - name: Installer les collections
         run: ansible-galaxy collection install -r ansible/requirements.yml
@@ -81,11 +87,18 @@ jobs:
           ansible-lint --version
           ansible-galaxy collection list
 
-      # Le profil est imposé explicitement : sans lui, ansible-lint choisit le
-      # plus haut que le dépôt satisfait, et la barre baisserait en silence le
-      # jour où une règle commencerait à échouer.
+      # Deux précisions qui ne sont pas cosmétiques.
+      #
+      # Le profil est imposé : sans lui, ansible-lint choisit le plus haut que
+      # le dépôt satisfait, et la barre baisserait en silence le jour où une
+      # règle commencerait à échouer.
+      #
+      # Le chemin aussi. Sans argument, ansible-lint ratisse tout le dépôt et
+      # juge les manifestes Kubernetes de k3s/ à l'aune de règles Ansible. Il
+      # faut par ailleurs l'exécuter depuis la racine, seul endroit d'où le
+      # .yamllint du dépôt s'applique.
       - name: ansible-lint
-        run: ansible-lint --profile production
+        run: ansible-lint --profile production ansible/
 
       # Deux inventaires, deux jeux de variables. L'inventaire d'exemple porte
       # des valeurs factices : il ne prouve pas le déploiement, seulement que le
