@@ -1,0 +1,18 @@
+# Gabarit — copier en `.sops.yaml` (ignoré par git) après avoir généré la clé :
+#
+#   age-keygen -o ~/.config/sops/age/keys.txt && chmod 600 ~/.config/sops/age/keys.txt
+#   cp .sops.yaml.example .sops.yaml
+#   sed -i "s|<DESTINATAIRE_AGE>|$(grep '^# public key:' ~/.config/sops/age/keys.txt | cut -d' ' -f4)|" .sops.yaml
+#
+# Le destinataire est une clé PUBLIQUE : la publier ne présenterait aucun
+# risque. `.sops.yaml` reste néanmoins hors dépôt, pour que rien de propre à
+# une installation ne s'y glisse par habitude.
+#
+# Seules les valeurs sont chiffrées, jamais les clés : un fichier chiffré reste
+# relisible en diff.
+#
+# Ajouter une machine : ajouter son destinataire ici, puis
+#   sops updatekeys secrets/piserv.sops.yaml
+creation_rules:
+  - path_regex: secrets/.*\.sops\.ya?ml$
+    age: <DESTINATAIRE_AGE>

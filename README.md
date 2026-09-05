@@ -4,7 +4,7 @@ Déploiement reproductible d'une forge **Forgejo** auto-hébergée, accessible d
 Internet en HTTPS *trusted*, sur un serveur maison. Testé sur Raspberry Pi 5
 (Debian 12, ARM64) mais valable sur tout Debian 12+ / Ubuntu 22.04+ (ARM64 ou AMD64).
 
-La procédure complète est dans **[SETUP.md](SETUP.md)**, la CI auto-hébergée dans **[SETUP-K3S.md](SETUP-K3S.md)**, et l'analyse de code dans **[SETUP-SONARQUBE.md](SETUP-SONARQUBE.md)**.
+La procédure complète est dans **[SETUP.md](SETUP.md)**, la CI auto-hébergée dans **[SETUP-K3S.md](SETUP-K3S.md)**, et l'analyse de code dans **[SETUP-SONARQUBE.md](SETUP-SONARQUBE.md)**. L'automatisation de l'ensemble est décrite dans **[IAC.md](IAC.md)**.
 
 ## Ce que ça monte
 
@@ -55,6 +55,10 @@ fail2ban, le service systemd et le port-forward sont détaillés pas à pas dans
 | `SETUP.md` | guide d'installation + runbook d'exploitation de la forge |
 | `SETUP-K3S.md` | guide du cluster k3s et des runners Forgejo Actions |
 | `SETUP-SONARQUBE.md` | guide du serveur SonarQube et de l'analyse en CI |
+| `IAC.md` | industrialisation Ansible + OpenTofu : frontière, étages, secrets |
+| `ansible/` | préparation de l'hôte — paquets, k3s, nginx, certificats |
+| `tofu/` | configuration par API — cluster, Forgejo, SonarQube |
+| `secrets/` | secrets chiffrés SOPS/age, versionnables sans risque |
 | `docker-compose.yml` | services `forgejo` + `db`, paramétrés par `.env` |
 | `k3s/` | manifestes par composant — `runner/`, `sonarqube/` — et `apply.sh` |
 | `examples/` | workflows d'analyse prêts à copier et convertisseur cppcheck → SonarQube |

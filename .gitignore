@@ -34,6 +34,51 @@ k3s/*secret*.yaml
 .claude/settings.local.json
 docker-compose.override.yml
 
+# ─────────────────────────────────────────────────────────────
+# IaC — OpenTofu / Terraform
+#   L'état contient les secrets EN CLAIR : il ne doit jamais être versionné.
+#   `.terraform.lock.hcl` est en revanche versionné volontairement — c'est lui
+#   qui épingle les empreintes des providers.
+# ─────────────────────────────────────────────────────────────
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# Les variables passent par SOPS ; un .tfvars en clair serait une régression.
+*.tfvars
+*.auto.tfvars
+!*.tfvars.example
+
+# ─────────────────────────────────────────────────────────────
+# IaC — secrets
+#   RÈGLE ABSOLUE : aucun secret n'entre dans ce dépôt, chiffré ou non.
+#   SOPS sert à protéger les fichiers au repos SUR LA MACHINE et à les
+#   sauvegarder ailleurs — il n'autorise pas leur publication.
+#   Seuls les gabarits sans valeur sont versionnés.
+# ─────────────────────────────────────────────────────────────
+secrets/*
+!secrets/*.example.yaml
+.sops.yaml
+!.sops.yaml.example
+
+# Clés de chiffrement — la clé age privée vit dans
+# ~/.config/sops/age/keys.txt, hors dépôt. Filet de sécurité si elle est
+# copiée ici par mégarde.
+keys.txt
+*.agekey
+age-key*.txt
+*.sops.yaml
+*.sops.yml
+
+# ─────────────────────────────────────────────────────────────
+# IaC — Ansible
+# ─────────────────────────────────────────────────────────────
+ansible/*.retry
+ansible/.ansible/
+ansible/inventory/hosts.yml
+
 # OS / éditeurs
 .DS_Store
 Thumbs.db

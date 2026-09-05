@@ -1,0 +1,22 @@
+# Copier en `hosts.yml` (ignoré par git) et renseigner.
+#
+#   cp ansible/inventory/hosts.example.yml ansible/inventory/hosts.yml
+#
+# Deux cibles sont prévues et doivent rester interchangeables : c'est en
+# rejouant le même rôle sur la VM amd64 qu'on vérifie qu'aucune valeur propre
+# au Pi ne s'est glissée dans le code.
+all:
+  children:
+    forge:
+      hosts:
+        piserv:
+          ansible_host: <IP_LAN_DU_SERVEUR>
+          ansible_user: <UTILISATEUR_SSH>
+          # Renseigné automatiquement par les faits ; forcé ici pour que les
+          # conditionnels spécifiques au Raspberry Pi soient testables.
+          host_profile: raspberry_pi
+
+        vmtest:
+          ansible_host: <IP_DE_LA_VM>
+          ansible_user: <UTILISATEUR_SSH>
+          host_profile: generic_amd64

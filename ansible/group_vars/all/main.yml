@@ -1,0 +1,23 @@
+# Variables non secrètes, communes à toutes les cibles.
+# Les secrets vivent dans ../../secrets/piserv.sops.yaml (chiffré).
+
+# ── Versions épinglées ────────────────────────────────────────
+# Épingler n'est pas de la frilosité : c'est ce qui rend un redéploiement à
+# six mois d'intervalle reproductible. Les montées de version sont un acte
+# délibéré, visible dans un diff.
+k3s_version:      v1.36.4+k3s1
+forgejo_image:    codeberg.org/forgejo/forgejo:11
+postgres_image:   postgres:16-alpine
+runner_image:     code.forgejo.org/forgejo/runner:6
+dind_image:       docker:27-dind
+sonarqube_image:  sonarqube:community
+job_image:        node:22-bookworm
+
+# ── Réseau ────────────────────────────────────────────────────
+forgejo_port:     8181
+sonarqube_port:   9000
+sonarqube_tls_port: 9443
+
+# ── Prérequis noyau ───────────────────────────────────────────
+# Elasticsearch (embarqué dans SonarQube) refuse de démarrer en dessous.
+vm_max_map_count: 524288

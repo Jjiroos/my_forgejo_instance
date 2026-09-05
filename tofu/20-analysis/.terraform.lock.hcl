@@ -1,0 +1,60 @@
+# This file is maintained automatically by "tofu init".
+# Manual edits may be lost in future updates.
+
+provider "registry.opentofu.org/carlpett/sops" {
+  version     = "1.4.1"
+  constraints = "~> 1.2"
+  hashes = [
+    "h1:vmBW+4J2FkW/zuDesBHYHpS4eqGZveI43AHwvDczzSw=",
+    "zh:4df8dea170a4cd926ca6ef0b9fa6fd1d8c1fa9bc9e78333d544a74c24e269cf9",
+    "zh:5cf661333ec5d5cce3b7c0fc399052cf8f8c50f6cb0a50f5aec2f91d83685e1e",
+    "zh:680616383404bc836a2d740a0dfae4691c18c8616f346e8fa795a1d790a2d888",
+    "zh:8ef127e590bd676718bc82afc0f1cad8d0a93d82e935ec21b22d6ae2fc2bff9f",
+    "zh:d030531c7b61922d4f4150c45a87c48ed5c6743348dbbfe70d34191cd13f2649",
+    "zh:d8c138c2c0d7c7d4e72a4ab667772e8f96ec17e13ffe0c6fbe21457e82c140f0",
+    "zh:fd3903e0f2040b67550bbce3b58e4e615a738993bc787f71adbc41afe38df518",
+  ]
+}
+
+provider "registry.opentofu.org/jdamata/sonarqube" {
+  version     = "0.16.21"
+  constraints = "~> 0.16"
+  hashes = [
+    "h1:jR2iZJWnSrnwLWaPBAAIY95Wgl1144n328cZFRkoe9U=",
+    "zh:21650737f597132a0c460ceae926c3e02e90511fab9b030c3487f2508af02c14",
+    "zh:285aeda778e8fca985621bf0a5a874e9b182c20ac691814ee9d728fdcc59ab73",
+    "zh:3ee3dbbf781f94222755b8bdb7882ae3a114e60196c87c60e3d72bea464dd615",
+    "zh:404701b761bda91cbfb680204c16d9c7277a3960af018d458cef54e6ea63f571",
+    "zh:4771c2c201e07ffd0e80cc6b73740125915f3d569c4bd61d15bff68fa2303b5f",
+    "zh:574b6bb378e788c723eb3855091747427d36a7737e84e91a31cc747fd80e33c2",
+    "zh:6b9c23a153b933df41278af9c63caee6f8df33123921dbe7e35b7e66b669e4fc",
+    "zh:9a33d66c954ad325949fe5528989ccccfc1d78a2ee0a4363b095195f15e04738",
+    "zh:bc92704f2a83268afea14e9bdb263b0eaae752d07e0ad7703eec455c3238f342",
+    "zh:ca2447801f696528b333650dc748155f9bc30702b8e37b7407af3774127a4a64",
+    "zh:d06e4440873e7540787e8b90e1c2e9a91c487f6a22a1d5e43246123cfef3368b",
+    "zh:d146dcffb9c64d3ff1ada894b0c5bb7380a70cae4f6d159a67776c116e936ee5",
+    "zh:f01ead640ab7cde719fad2e96c59aeb49815a21f18d7cff1a57de09309259077",
+  ]
+}
+
+provider "registry.opentofu.org/svalabs/forgejo" {
+  version     = "1.6.0"
+  constraints = "~> 1.6"
+  hashes = [
+    "h1:l+mewxOlp5Z0tfL+pgdqPuJOlYnjnPVIeYPNzpv0H4M=",
+    "zh:336957908915b2aa74fa4f1ee2020f16a5738ba034da393521a2d70c31d2eb9b",
+    "zh:41d632b7771b5580c847440c1cc745f08b8d98fabb3f314951e2b86debf232d7",
+    "zh:68225e0074f99a66b0c537db796126dce8ef3365d1a40a0d1b5173553a90367c",
+    "zh:7c01fcc7e2ca8b97f0c58d51d1218fe903cf32762abf9f2a0a323e706d809184",
+    "zh:81e73ae491c8c1dc42447fb50ee179546886679f140a7b5510c85f520183d6ca",
+    "zh:836d7ca2bd74648d11ae2a352704cbbbe58c23d6846411ae16a88edbea93a8c3",
+    "zh:890df766e9b839623b1f0437355032a3c006226a6c200cd911e15ee1a9014e9f",
+    "zh:9b5b2a6953694d18a23d6e7a3da1791cc0744050032be333947e38c8adef2961",
+    "zh:a08c6fc50fe3984009cf0d1aa02bab8f9da4841b93e0b02d90bc6090d5e68216",
+    "zh:a6190b02297666ed6bc109b13b834f79b53c2806dbce24306d3147f542980967",
+    "zh:ae6e62ccb3a35f1d8dca68ad235fe4db2df5837402b6e0b6d290a4ce82804c9b",
+    "zh:ce2af4a4c9fda2e6e575910c94a1a8389f8ddb4d8c024988fdc9d89340297410",
+    "zh:d6490f877fac88a7d51908c546e54d377d0558aecb55e265bb093dc732bbe083",
+    "zh:f4cc816f228d1cf5c261501ef47275a20b03e7b4d9a22fc462cb9ee6468771ac",
+  ]
+}
