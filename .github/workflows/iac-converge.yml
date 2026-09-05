@@ -213,9 +213,19 @@ jobs:
         run: |
           sudo fail2ban-client status forgejo
 
-          curl -sk -o /dev/null --max-time 15 \
-            -u "utilisateur-inexistant:mot-de-passe-faux" \
-            https://127.0.0.1:8181/api/v1/user || true
+          # Le formulaire web, et pas l'API. Un échec de basic auth sur
+          # /api/v1/ ne produit qu'une ligne de routeur « 401 Unauthorized »,
+          # strictement identique à celle d'une requête anonyme légitime : on
+          # ne bâtit pas une jail sur un signal qui bannirait les curieux.
+          # Le formulaire, lui, journalise « Failed authentication attempt ».
+          jeton=$(curl -sk -c /tmp/cookies.txt --max-time 15 https://127.0.0.1:8181/user/login \
+                  | grep -oP '(?<=name="_csrf" value=")[^"]+' | head -1)
+          curl -sk -o /dev/null --max-time 15 -b /tmp/cookies.txt -c /tmp/cookies.txt \
+            -X POST \
+            -d "_csrf=${jeton}" \
+            -d "user_name=utilisateur-inexistant" \
+            -d "password=mot-de-passe-faux" \
+            https://127.0.0.1:8181/user/login || true
 
           for _ in $(seq 1 30); do
             comptes=$(sudo fail2ban-client status forgejo | sed -n 's/.*Total failed:[[:space:]]*\([0-9]\+\).*/\1/p')

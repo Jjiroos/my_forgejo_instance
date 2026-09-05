@@ -1,9 +1,24 @@
 # {{ ansible_managed }}
 #
 # Filtre des échecs d'authentification de Forgejo. Les trois formulations sont
-# celles que la documentation amont retient : la première couvre le mot de
-# passe erroné, la deuxième les jetons et clés, la troisième un identifiant
-# qui n'existe pas.
+# celles que la documentation amont retient. Vérifié sur Forgejo 11, contre un
+# journal produit pour l'occasion — mot de passe erroné et compte inexistant
+# donnent tous deux, depuis routers/web/auth/auth.go :
+#
+#   [W] Failed authentication attempt for testeur from 198.51.100.7:0:
+#       user's password is invalid [uid: 1, name: testeur]
+#   [W] Failed authentication attempt for inconnu from 198.51.100.8:0:
+#       user does not exist [uid: 0, name: inconnu]
+#
+# 2 lignes reconnues sur 39, aucun faux positif.
+#
+# CE QUE CE FILTRE NE COUVRE PAS. Un échec d'authentification sur /api/v1/ en
+# basic auth ne produit aucune de ces lignes : seulement un « 401 Unauthorized »
+# de routeur, rigoureusement identique à celui d'une requête anonyme légitime.
+# Bannir là-dessus reviendrait à bannir quiconque interroge l'API sans jeton.
+# La force brute sur mot de passe passe par le formulaire, et c'est lui qui est
+# couvert ; un jeton d'API volé ne se défend pas par fail2ban mais par sa
+# révocation.
 #
 # Ce filtre n'a de sens que si l'adresse journalisée est celle du client et
 # non celle de nginx. C'est le cas ici sans réglage supplémentaire : le vhost

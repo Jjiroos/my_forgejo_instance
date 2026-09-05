@@ -46,6 +46,8 @@ Le rôle possède `filter.d/forgejo.conf` et `jail.d/10-forgejo.conf`. C'est ce 
 
 La jail ne vaut que si l'adresse journalisée est celle du client et non celle de nginx. C'est le cas sans réglage supplémentaire : le vhost transmet `X-Forwarded-For`, et Forgejo fait confiance par défaut aux mandataires de `127.0.0.0/8`. **Si nginx déménageait hors de l'hôte**, il faudrait ajouter son adresse à `REVERSE_PROXY_TRUSTED_PROXIES` — sans quoi la jail bannirait le mandataire, c'est-à-dire tout le monde d'un coup.
 
+**Le formulaire seul est couvert, et c'est délibéré.** Une authentification refusée sur `/api/v1/` en basic auth ne laisse dans le journal qu'un `401 Unauthorized` de routeur, identique à celui d'une requête anonyme : bâtir une jail dessus reviendrait à bannir quiconque interroge l'API sans jeton. La force brute sur mot de passe passe par `/user/login` ; un jeton d'API volé ne se défend pas par fail2ban mais par sa révocation.
+
 Se vérifie sans attendre une attaque :
 
 ```bash
