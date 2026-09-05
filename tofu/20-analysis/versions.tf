@@ -10,7 +10,7 @@ terraform {
   required_version = ">= 1.6"
   required_providers {
     sonarqube = { source = "jdamata/sonarqube", version = "~> 0.16" }
-    forgejo   = { source = "svalabs/forgejo",   version = "~> 1.6"  }
-    sops      = { source = "carlpett/sops",     version = "~> 1.2"  }
+    forgejo   = { source = "svalabs/forgejo", version = "~> 1.6" }
+    sops      = { source = "carlpett/sops", version = "~> 1.2" }
   }
 }

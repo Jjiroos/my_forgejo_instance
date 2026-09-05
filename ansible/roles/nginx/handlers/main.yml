@@ -1,3 +1,4 @@
+---
 - name: Recharger nginx
   ansible.builtin.systemd:
     name: nginx

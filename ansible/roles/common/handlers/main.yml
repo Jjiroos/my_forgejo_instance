@@ -1,3 +1,4 @@
+---
 - name: Recharger fail2ban
   ansible.builtin.systemd:
     name: fail2ban

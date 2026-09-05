@@ -1,3 +1,4 @@
+---
 # Mécanisme générique de publication d'un service derrière nginx.
 #
 # Le rôle ne connaît aucun site en particulier : il consomme `nginx_sites`.

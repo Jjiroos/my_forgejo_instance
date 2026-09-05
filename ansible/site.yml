@@ -1,3 +1,4 @@
+---
 # Point d'entrée : amène une machine nue à l'état « prête pour OpenTofu ».
 #
 # Ce playbook s'arrête là où une API commence. Tout ce qui se configure ensuite

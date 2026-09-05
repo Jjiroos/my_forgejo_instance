@@ -1,3 +1,4 @@
+---
 # Variables non secrètes, communes à toutes les cibles.
 # Les secrets vivent dans ../../secrets/piserv.sops.yaml (chiffré).
 

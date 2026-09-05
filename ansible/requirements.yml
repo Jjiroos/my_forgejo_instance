@@ -1,0 +1,31 @@
+---
+# Collections Ansible requises par les rôles de ce dépôt.
+#
+#   ansible-galaxy collection install -r ansible/requirements.yml
+#
+# Contrairement aux images de conteneurs — épinglées à la version exacte dans
+# group_vars/all/main.yml, parce qu'elles *sont* l'infrastructure déployée —
+# les collections sont de l'outillage. Un plancher plutôt qu'une version fixe :
+# un redéploiement doit bénéficier des correctifs, et c'est précisément le rôle
+# de la CI d'attraper une version qui casserait quelque chose.
+#
+# Les planchers sont les versions éprouvées sur piserv (Debian 12, paquets
+# distribution). Rien n'exige d'y monter : c'est le minimum vérifié.
+collections:
+  # ansible.posix.sysctl, ansible.posix.profile_tasks
+  - name: ansible.posix
+    version: ">=1.5.4"
+
+  # community.general.ufw
+  - name: community.general
+    version: ">=6.6.2"
+
+  # community.crypto.openssl_privatekey / openssl_csr / x509_certificate,
+  # utilisés par le mode auto-signé du rôle acme (CI uniquement).
+  - name: community.crypto
+    version: ">=2.14.0"
+
+  # Lecture des secrets chiffrés. Inutile en CI — aucun secret n'y est déchiffré
+  # — mais requis dès qu'un inventaire réel référence secrets/*.sops.yaml.
+  - name: community.sops
+    version: ">=1.6.2"

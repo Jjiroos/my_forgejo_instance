@@ -1,3 +1,4 @@
+---
 # Déclaration des services publiés. Ce fichier est versionné : il ne contient
 # que des références, jamais de valeur propre à une installation. Les valeurs
 # (domaine, IP, adresse de contact) viennent de l'inventaire, hors dépôt.
