@@ -133,9 +133,22 @@ Dans Forgejo, sur le dépôt à analyser : *Paramètres → Actions → Secrets*
 | `SONAR_HOST_URL` | `http://<IP_LAN>:9000` |
 | `SONAR_TOKEN` | le token généré en [§4](#4-première-connexion-et-token-ci) |
 
-> Un secret d'**organisation** évite de le répéter sur chaque dépôt.
+> Un secret d'**utilisateur** ou d'**organisation** (*Paramètres du compte → Actions → Secrets*) évite de le répéter sur chaque dépôt — le bon choix dès qu'on a plus d'un projet à analyser.
 
 Copier ensuite [`examples/workflows/sonar-analysis.yml`](examples/workflows/sonar-analysis.yml) dans `.forgejo/workflows/` du dépôt, et pousser.
+
+### L'action officielle fonctionne aussi en arm64
+
+`examples/workflows/sonar-analysis.yml` télécharge le scanner à la main, pour rester lisible et sans dépendance. Mais `SonarSource/sonarqube-scan-action@v4` **marche sur ce cluster** : c'est une action composite qui choisit la bonne architecture toute seule, vérifié ici sur `Linux … aarch64`. Elle gère en plus la mise en cache du CLI.
+
+```yaml
+      - uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN:    ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+```
+
+À ne pas confondre avec l'**image** `sonarsource/sonar-scanner-cli`, qui n'est publiée qu'en amd64 et ne tourne pas ici.
 
 ### Pourquoi l'image de base est Node et pas Java
 
@@ -259,6 +272,26 @@ sudo dmesg -T | grep -iE 'oom-kill|Memory cgroup' | tail -3
 ### Le job CI échoue sur `node -v`
 
 L'image du job n'a pas Node. Utiliser `runs-on: docker` (cf. [§5](#5-brancher-un-dépôt)).
+
+### `Failed to get server version` / `no scheme was found`
+
+```
+java.lang.IllegalStateException: Failed to get server version
+Caused by: java.lang.IllegalArgumentException:
+    Expected URL scheme 'http' or 'https' but no scheme was found for /api/s...
+```
+
+Le message donne l'impression d'un problème réseau, mais il dit l'inverse : le scanner a construit l'URL `/api/server/version` **sans hôte**. `SONAR_HOST_URL` arrive donc **vide** dans le job — secret absent, mal orthographié, ou non exposé à l'étape (une `action` a besoin de le recevoir explicitement via `env:`).
+
+Vérifier que les secrets existent bien :
+
+```bash
+# côté base Forgejo — 0 ligne = aucun secret n'a jamais été créé
+docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c "SELECT name, repo_id, owner_id FROM secret;"
+```
+
+L'échec est immédiat (moins d'une seconde) : si le job tombe tout de suite après le démarrage du scanner, c'est cette piste-là, pas la connectivité.
 
 ### Le job CI ne joint pas SonarQube
 

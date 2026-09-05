@@ -194,15 +194,17 @@ Le script lit `.env`, substitue `${FORGEJO_DOMAIN}` et `${NODE_LAN_IP}` dans les
 |---|---|---|
 | `dind` (sidecar natif) | démon Docker qui exécute les jobs | 2 CPU / **2 Gio** |
 | `register` (init) | enregistre le runner au tout premier démarrage | — |
-| `runner` | act_runner, interroge Forgejo et pilote dind | 0,5 CPU / 512 Mio |
+| `runner` | act_runner, interroge Forgejo et pilote dind | 2 CPU / 1 Gio |
 
 Cinq décisions qui méritent une explication :
 
 - **StatefulSet, pas Deployment.** `/data` est un volume persistant, donc le runner s'enregistre une seule fois et garde une identité stable. Avec un `emptyDir`, chaque redémarrage de pod créerait un nouveau runner et laisserait une traînée d'entrées « offline » dans l'administration Forgejo.
 - **`hostAliases`.** Le runner cible `https://<SOUS_DOMAINE>.duckdns.org:8181` mais ce nom est résolu vers l'IP LAN du serveur. Le certificat Let's Encrypt reste valide (même nom d'hôte) et le trafic ne sort jamais du réseau local. Sans cela il faudrait compter sur le NAT loopback de la box, qui n'est pas garanti — et les pods k3s ne peuvent de toute façon pas joindre le bridge Docker de Forgejo.
 - **Socket unix plutôt que TCP.** Le runner parle à dind via `/var/run/docker.sock` partagé par un `emptyDir`. Docker déprécie l'écoute TCP sans authentification et annonce sa suppression.
-- **`GOMEMLIMIT` sur le conteneur runner.** act_runner est écrit en Go : sans pression mémoire, son tas grossit sans jamais être rendu au système. Mesuré ici : ~25 Mio au démarrage, ~253 Mio après 42 minutes **à vide**, puis OOM kill. `GOMEMLIMIT=400MiB` sous une limite de 512 Mio force le ramasse-miettes bien avant le plafond du cgroup. Régler un plafond sans `GOMEMLIMIT` ne fait que repousser l'échéance.
+- **`GOMEMLIMIT` sur le conteneur runner.** act_runner est écrit en Go : sans pression mémoire, son tas grossit sans jamais être rendu au système. Mesuré ici : ~25 Mio au démarrage, ~253 Mio après 42 minutes **à vide**, puis OOM kill. `GOMEMLIMIT` force le ramasse-miettes bien avant le plafond du cgroup ; régler un plafond sans lui ne fait que repousser l'échéance.
+  Le calibrer **trop bas est pire que l'OOM** : si le tas colle en permanence au seuil, le GC tourne sans discontinuer et consomme tout le quota CPU. Le runner ne plante plus, il se traîne — voir [§13](#un-job-traîne-indéfiniment-sur--set-up-job-). Retenir : `GOMEMLIMIT` ≈ 75 % de `limits.memory`, et une limite CPU assez large pour que le GC ne prenne pas la place du travail utile. Ici : `1 Gio` / `768MiB` / `2` CPU.
 - **La limite de 2 Gio est sur `dind`, pas sur le runner.** Les conteneurs de job sont des enfants du démon Docker : leur mémoire est comptée dans **son** cgroup. C'est donc ce plafond qui borne réellement un build.
+- **Le runner n'est pas qu'un sondeur.** Il clone les actions référencées par le workflow, les recopie dans le conteneur de job (`docker cp`) et relaie les logs. Tout ce travail est *hors* du conteneur de job : le serrer sur le CPU ralentit chaque étape de préparation, y compris celles qui affichent un conteneur de job inactif.
 
 ---
 
@@ -320,16 +322,21 @@ Deux besoins différents, deux procédures.
 
 C'est le cas d'un pic de charge : les jobs font la queue et tu veux les absorber plus vite. Il faut **deux gestes, pas un** — sans le premier, le nouveau pod reste `Pending`, bloqué par le quota :
 
+Un pod runner coûte **3 Gio / 4 CPU** de plafond (dind 2 Gio + act_runner 1 Gio). Le quota livré vaut exactement cela : il faut donc le doubler avant d'ajouter la seconde réplique.
+
 ```bash
 # 1. relever le plafond du namespace
-kubectl -n forgejo-actions patch resourcequota ci-budget \
-  --type merge -p '{"spec":{"hard":{"limits.memory":"5Gi","requests.memory":"1536Mi"}}}'
+kubectl -n forgejo-actions patch resourcequota ci-budget --type merge -p '{"spec":{"hard":{
+  "limits.memory":"6Gi", "limits.cpu":"8",
+  "requests.memory":"1280Mi", "requests.cpu":"800m"}}}'
 
 # 2. ajouter une réplique
 kubectl -n forgejo-actions scale statefulset forgejo-runner --replicas=2
 ```
 
 Chaque réplique s'enregistre toute seule sous son propre nom (`forgejo-runner-1`), réutilise le Secret existant et obtient ses propres volumes. Retour en arrière : `--replicas=1` puis remettre le quota d'origine.
+
+> Sur ce serveur (4 cœurs, 8 Gio), 6 Gio de plafond CI ne laisse plus la place à SonarQube en même temps. Ce sont des plafonds, pas des réservations — mais deux builds lourds simultanés feront basculer la machine sur le swap. Ici, l'alternative `capacity` ci-dessous est presque toujours le meilleur choix.
 
 Pour rendre le changement permanent, éditer `replicas:` dans `k3s/runner/20-runner-statefulset.yaml` et les valeurs du `ResourceQuota` dans `k3s/runner/00-namespace.yaml`, puis `./k3s/apply.sh`.
 
@@ -372,7 +379,7 @@ La configuration livrée vise **1 développeur en usage courant, une dizaine en 
 |---|---|---|
 | `replicas` | 1 | un seul pod runner |
 | `capacity` | 2 | 2 jobs simultanés |
-| `ResourceQuota` | 2,5 Gio / 3 CPU | plafond dur de toute la CI |
+| `ResourceQuota` | 3 Gio / 4 CPU | plafond dur de toute la CI |
 
 Sur une machine à 4 cœurs, le facteur limitant est le CPU, pas le nombre de runners : au-delà de ~4 jobs simultanés les builds se ralentissent mutuellement. Les jobs excédentaires **font la queue**, ce qui est le comportement souhaitable — mieux vaut attendre que faire tomber la forge.
 
@@ -446,7 +453,7 @@ sudo dmesg -T | grep -iE 'oom-kill|Memory cgroup' | tail -5
 - `constraint=CONSTRAINT_MEMCG` → le conteneur a dépassé **sa propre** limite.
 - `constraint=CONSTRAINT_NONE` → la machine entière manquait de RAM, le noyau a choisi une victime ; c'est le dimensionnement global qu'il faut revoir, pas la limite du pod.
 
-Dans le premier cas, pour act_runner, la cause est presque toujours la croissance du tas Go décrite en [§7](#7-déployer-le-runner) : vérifier que `GOMEMLIMIT` est bien positionné et vaut environ 80 % de `limits.memory`.
+Dans le premier cas, pour act_runner, la cause est presque toujours la croissance du tas Go décrite en [§7](#7-déployer-le-runner) : vérifier que `GOMEMLIMIT` est bien positionné et vaut environ 75 % de `limits.memory`.
 
 ```bash
 kubectl -n forgejo-actions get pod forgejo-runner-0 \
@@ -454,6 +461,44 @@ kubectl -n forgejo-actions get pod forgejo-runner-0 \
 ```
 
 Le redémarrage est sans danger : le runner se ré-enregistre à partir de son volume persistant et reprend le travail. Un job en cours au moment du kill est en revanche perdu et doit être relancé.
+
+### Un job traîne indéfiniment sur « Set up job »
+
+Symptôme trompeur : le conteneur de job est bien démarré mais ne consomme **rien**, tandis que le conteneur `runner` est collé à sa limite CPU. Il n'y a ni erreur ni redémarrage — le job avance, dix fois trop lentement.
+
+Le coupable est presque toujours le **throttling CFS** du conteneur `runner`, souvent aggravé par un `GOMEMLIMIT` trop serré : le tas Go colle au seuil, le ramasse-miettes tourne en continu et mange le quota CPU à la place du travail utile.
+
+Confirmer en lisant le cgroup du conteneur — c'est la seule mesure qui tranche, `kubectl top` ne montre pas le throttling :
+
+```bash
+CID=$(kubectl -n forgejo-actions get pod forgejo-runner-0 \
+        -o jsonpath='{range .status.containerStatuses[*]}{.name}{" "}{.containerID}{"\n"}{end}' \
+      | awk '/^runner /{print $2}' | sed 's#.*/##')
+CG=$(sudo find /sys/fs/cgroup/kubepods.slice -maxdepth 4 -type d -name "*${CID}*" | head -1)
+
+grep -E 'nr_periods|nr_throttled|throttled_usec|usage_usec' "$CG/cpu.stat"
+grep -E '^anon ' "$CG/memory.stat"
+```
+
+Lecture :
+
+- `nr_throttled` proche de `nr_periods` → le conteneur passe l'essentiel de son temps **gelé**.
+- `throttled_usec` du même ordre que `usage_usec` → il perd autant de temps qu'il en obtient. Relever `limits.cpu`.
+- `anon` proche de la valeur de `GOMEMLIMIT` → le GC tourne en boucle. Relever **les deux** : `limits.memory` et `GOMEMLIMIT` avec lui.
+
+Relevé réel ayant motivé le dimensionnement actuel, avec `cpu: 500m` / `memory: 512Mi` / `GOMEMLIMIT=400MiB` :
+
+```
+nr_periods 1217   nr_throttled 824        # 68 % des périodes throttlées
+usage_usec 42.1 s throttled_usec 44.2 s   # plus de temps gelé qu'exécuté
+anon 379 Mio                              # tas collé au GOMEMLIMIT
+```
+
+Conséquence sur un job réel : **2 min 38 s** passées sur une seule étape de préparation (le clone d'`actions/cache` côté runner), pendant que le conteneur de job affichait 0 % de CPU.
+
+Les valeurs livrées aujourd'hui — `cpu: 2`, `memory: 1Gi`, `GOMEMLIMIT=768MiB` — corrigent le cas. Après modification de `k3s/runner/20-runner-statefulset.yaml`, **relever d'abord le `ResourceQuota`** sinon le nouveau pod est refusé (cf. [§11](#cas-1--plus-de-jobs-en-parallèle-même-type-de-runner)).
+
+> Si le throttling n'est **pas** confirmé, chercher ailleurs : un job lent sur `Set up job` peut aussi venir d'un `docker pull` d'image volumineuse, ou d'une action référencée hébergée sur un dépôt lent à cloner.
 
 ### Le runner ne voit pas la forge
 

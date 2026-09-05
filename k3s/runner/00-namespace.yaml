@@ -18,8 +18,8 @@ spec:
   hard:
     requests.cpu: "1"
     requests.memory: 768Mi
-    limits.cpu: "3"
-    limits.memory: 2560Mi          # plafond RAM de TOUTE la CI
+    limits.cpu: "4"
+    limits.memory: 3Gi             # plafond RAM de TOUTE la CI
     pods: "4"
     persistentvolumeclaims: "6"
 ---
