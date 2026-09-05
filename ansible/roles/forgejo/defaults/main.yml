@@ -1,0 +1,68 @@
+---
+# ── Emplacement ───────────────────────────────────────────────
+# Délibérément différent de /opt/forgejo, où l'installation manuelle de piserv
+# cohabite aujourd'hui avec le dépôt git lui-même. Y écrire depuis Ansible
+# écraserait un docker-compose.yml versionné — la reprise de l'existant est
+# une étape à part entière, pas un effet de bord de ce rôle.
+forgejo_base_dir: /srv/forgejo
+forgejo_data_dir: "{{ forgejo_base_dir }}/data"
+forgejo_db_data_dir: "{{ forgejo_base_dir }}/postgres-data"
+
+# Compte propriétaire des données dans le conteneur. 1000 partout ailleurs
+# dans ce dépôt : c'est ce qui rend les fichiers lisibles depuis l'hôte.
+forgejo_uid: 1000
+forgejo_gid: 1000
+forgejo_timezone: Europe/Paris
+
+# ── Réseau ────────────────────────────────────────────────────
+# Écoute en loopback strict. Le seul chemin d'entrée est le vhost nginx, qui
+# porte le TLS, la limitation de débit et le filtrage. Publier ce port sur une
+# interface joignable contournerait tout cela d'un coup.
+forgejo_bind_address: 127.0.0.1
+forgejo_http_port: 3000
+
+# ── Base de données ───────────────────────────────────────────
+forgejo_db_name: forgejo
+forgejo_db_user: forgejo
+forgejo_db_password: ""          # obligatoire — vient des secrets SOPS
+
+# ── Secrets applicatifs ───────────────────────────────────────
+# Vides par défaut, et ce n'est pas un oubli : Forgejo génère ces valeurs à
+# son premier démarrage et les conserve dans data/gitea/conf/app.ini. Les
+# forcer ici n'a de sens que dans un cas — restaurer une base existante sur un
+# volume neuf. SECRET_KEY chiffre en base les secrets TOTP et les identifiants
+# de miroir : s'il ne correspond pas à la base restaurée, ces données sont
+# perdues, silencieusement, et rien ne le signale avant qu'on en ait besoin.
+forgejo_secret_key: ""
+forgejo_internal_token: ""
+forgejo_oauth2_jwt_secret: ""
+forgejo_lfs_jwt_secret: ""
+
+# ── Amorçage ──────────────────────────────────────────────────
+# L'assistant web est verrouillé : tout ce qu'il demanderait est déjà décidé
+# ici. Le laisser ouvert sur une instance joignable depuis Internet, c'est
+# offrir la configuration de la forge au premier arrivant.
+forgejo_install_lock: true
+
+# Compte d'administration créé en ligne de commande quand les deux valeurs
+# sont fournies. Sans lui, une instance verrouillée n'a aucun accès possible.
+forgejo_admin_username: ""
+forgejo_admin_password: ""
+forgejo_admin_email: ""
+
+# ── Journalisation et Actions ─────────────────────────────────
+forgejo_log_level: info
+forgejo_actions_enabled: true
+forgejo_actions_default_url: https://code.forgejo.org
+
+# ── Démarrage ─────────────────────────────────────────────────
+forgejo_wait_timeout: 300
+
+# ── fail2ban ──────────────────────────────────────────────────
+# Le rôle possède sa jail : c'est ce qui permettra de retirer le local.conf
+# écrit à la main, signalé par le rôle common.
+forgejo_fail2ban_enabled: true
+forgejo_fail2ban_maxretry: 5
+forgejo_fail2ban_bantime: 1h
+forgejo_fail2ban_findtime: 10m
+forgejo_log_file: "{{ forgejo_data_dir }}/gitea/log/gitea.log"

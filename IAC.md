@@ -118,7 +118,7 @@ ansible/
   group_vars/all/main.yml     versions épinglées, ports, prérequis noyau
   group_vars/all/sites.yml    services publiés (références seules)
   group_vars/ci/main.yml      surcharges de CI, valeurs fictives
-  roles/                      common, acme, nginx — la suite à implémenter
+  roles/                      common, acme, nginx, docker, forgejo
 tofu/
   00-cluster/                 ressources k3s
   10-forgejo/                 configuration de la forge
@@ -208,9 +208,17 @@ Le second passage doit rapporter `changed=0`. Un playbook qui « marche » mais 
 
 ### Ce que la convergence contrôle après coup
 
-`changed=0` prouve la convergence, pas le résultat. Le workflow regarde ensuite la machine elle-même : `vm.max_map_count`, le certificat et ses extensions, `nginx -t`, les ports en écoute, une requête TLS réelle sur chaque vhost, les règles UFW, et la jail `sshd` de fail2ban.
+`changed=0` prouve la convergence, pas le résultat. Le workflow regarde ensuite la machine elle-même : `vm.max_map_count`, le certificat et ses extensions, `nginx -t`, les ports en écoute, les règles UFW, les jails de fail2ban, l'état des conteneurs et la santé applicative de la forge.
 
-Les deux vhosts doivent répondre **502**. C'est le résultat attendu, et il prouve davantage qu'un 200 : la terminaison TLS, le filtrage par IP et le relais fonctionnent — seul le service en amont, que ce playbook ne déploie pas, manque.
+**Les deux vhosts doivent répondre différemment, et c'est là qu'est le contrôle.** Celui de la forge répond `200` sur `/api/healthz` : terminaison TLS, relais et application réellement démarrée derrière, prouvés d'un coup. Celui de SonarQube répond `502`, parce que ce playbook ne déploie pas SonarQube — un 502 n'est pas un échec ici, c'est la preuve que le vhost relaie vers un amont absent. Obtenir autre chose signifierait qu'il ne fait pas ce qu'il annonce.
+
+Trois contrôles portent sur ce qui échoue silencieusement quand on ne le regarde pas :
+
+- **La forge est-elle accessible sans l'assistant web ?** Le job vérifie que le compte d'administration existe, créé en ligne de commande. Une instance verrouillée sans compte est une instance perdue.
+- **Le port applicatif est-il vraiment en loopback ?** `3000` doit apparaître lié à `127.0.0.1` et jamais à `0.0.0.0` — sinon tout le filtrage du vhost est contournable.
+- **La jail compte-t-elle réellement ?** Le job émet une authentification refusée à travers nginx, puis exige que `fail2ban-client status forgejo` rapporte au moins un échec. Une jail « active » qui compte zéro n'est pas une protection ; c'est exactement le défaut trouvé sur la jail `sshd`, et ce contrôle-là l'aurait attrapé.
+
+Pour que cette dernière mesure soit possible, la CI passe `ignoreself` à `false` et remplace `ignoreip` par un préfixe RFC 5737 : sans cela, toute tentative émise depuis le runner serait exemptée, et une jail muette resterait indiscernable d'une jail qui fonctionne.
 
 ### Les secrets, et leur absence
 
@@ -242,7 +250,7 @@ Le job `secrets` de `iac-lint.yml` transforme la règle du §6 en contrôle exé
 | 1 | Rôle `common` : paquets, sysctl, UFW, fail2ban | **fait** |
 | 2 | Rôles `acme` et `nginx` — **le mécanisme générique de publication d'un site** | **écrit, éprouvé à blanc** |
 | 2 bis | CI GitHub : lint, garde anti-secret, convergence réelle sur amd64 et arm64 | **fait** |
-| 3 | Rôles `docker` et `forgejo` : pile docker-compose | à faire |
+| 3 | Rôles `docker` et `forgejo` : pile docker-compose, compte d'administration, jail | **fait** |
 | 4 | Rôles `cgroup_pi` et `k3s` | à faire |
 | 5 | `tofu/00-cluster` : migration des manifestes de `k3s/` | à faire |
 | 6 | `tofu/10-forgejo` et `tofu/20-analysis` — SonarQube devient le second site | à faire |
@@ -250,6 +258,12 @@ Le job `secrets` de `iac-lint.yml` transforme la règle du §6 en contrôle exé
 | 8 | Validation complète sur la VM amd64 | à faire |
 
 Les étapes 2 et 3 sont le cœur de la valeur : une fois le couple `acme` + `nginx` paramétré par une liste de sites, publier un nouveau service revient à ajouter une entrée. Forgejo puis SonarQube servent à démontrer que le mécanisme tient sur deux cas réels — l'un exposé sur Internet, l'autre restreint au LAN.
+
+### Deux forges, deux chemins
+
+Le rôle `forgejo` écrit dans **`/srv/forgejo`**. L'installation manuelle de piserv vit dans `/opt/forgejo`, qui est aussi le répertoire de travail de ce dépôt git : y faire écrire Ansible écraserait un `docker-compose.yml` versionné et salirait l'arbre à chaque convergence.
+
+Les deux chemins coexisteront donc jusqu'à l'étape 7. La bascule y consistera à arrêter l'ancienne pile, déplacer `data/` et `postgres-data/`, relever les quatre clés applicatives de l'`app.ini` existant vers le fichier de secrets, puis converger. Elle se prépare, elle ne s'improvise pas.
 
 ### Reprise de l'existant : ce qu'il reste à débloquer
 

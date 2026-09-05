@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+#
+# Filtre des échecs d'authentification de Forgejo. Les trois formulations sont
+# celles que la documentation amont retient : la première couvre le mot de
+# passe erroné, la deuxième les jetons et clés, la troisième un identifiant
+# qui n'existe pas.
+#
+# Ce filtre n'a de sens que si l'adresse journalisée est celle du client et
+# non celle de nginx. C'est le cas ici sans réglage supplémentaire : le vhost
+# transmet X-Forwarded-For, et Forgejo fait confiance par défaut aux mandataires
+# de 127.0.0.0/8. Le jour où nginx déménagerait hors de l'hôte, il faudrait
+# ajouter son adresse à REVERSE_PROXY_TRUSTED_PROXIES — sans quoi la jail
+# bannirait le mandataire, c'est-à-dire tout le monde.
+#
+# Se vérifie sans attendre une attaque :
+#   fail2ban-regex {{ forgejo_log_file }} /etc/fail2ban/filter.d/forgejo.conf
+[Definition]
+failregex = .*(Failed authentication attempt|invalid credentials|Attempted access of unknown user).* from <HOST>
+ignoreregex =

@@ -1,0 +1,80 @@
+# {{ ansible_managed }}
+#
+# Toute la configuration de Forgejo passe par des variables FORGEJO__section__CLE
+# plutôt que par un app.ini écrit ici. La raison est l'idempotence : l'entrypoint
+# de l'image réécrit app.ini à chaque démarrage à partir de ces variables, si
+# bien qu'un app.ini posé par Ansible serait modifié dans la seconde qui suit —
+# deux sources de vérité pour le même fichier, et un diff permanent.
+#
+# Les valeurs sensibles ne sont pas ici mais dans .env, en 0600.
+services:
+  forgejo:
+    image: {{ forgejo_image }}
+    container_name: forgejo
+    restart: unless-stopped
+    environment:
+      - USER_UID={{ forgejo_uid }}
+      - USER_GID={{ forgejo_gid }}
+      - TZ={{ forgejo_timezone }}
+      - FORGEJO__database__DB_TYPE=postgres
+      - FORGEJO__database__HOST=db:5432
+      - FORGEJO__database__NAME=${POSTGRES_DB}
+      - FORGEJO__database__USER=${POSTGRES_USER}
+      - FORGEJO__database__PASSWD=${POSTGRES_PASSWORD}
+      - FORGEJO__server__ROOT_URL=https://{{ forgejo_domain }}:{{ forgejo_port }}/
+      - FORGEJO__server__HTTP_PORT={{ forgejo_http_port }}
+{% if forgejo_install_lock %}
+      - FORGEJO__security__INSTALL_LOCK=true
+{% endif %}
+{% if forgejo_secret_key | length > 0 %}
+      - FORGEJO__security__SECRET_KEY=${FORGEJO_SECRET_KEY}
+{% endif %}
+{% if forgejo_internal_token | length > 0 %}
+      - FORGEJO__security__INTERNAL_TOKEN=${FORGEJO_INTERNAL_TOKEN}
+{% endif %}
+{% if forgejo_oauth2_jwt_secret | length > 0 %}
+      - FORGEJO__oauth2__JWT_SECRET=${FORGEJO_OAUTH2_JWT_SECRET}
+{% endif %}
+{% if forgejo_lfs_jwt_secret | length > 0 %}
+      - FORGEJO__server__LFS_JWT_SECRET=${FORGEJO_LFS_JWT_SECRET}
+{% endif %}
+      # SSH désactivé côté Forgejo : le port 22 de l'hôte reste celui d'OpenSSH,
+      # et les dépôts se clonent en HTTPS à travers nginx.
+      - FORGEJO__server__START_SSH_SERVER=false
+      - FORGEJO__server__DISABLE_SSH=true
+      - FORGEJO__log__MODE=console,file
+      - FORGEJO__log__LEVEL={{ forgejo_log_level }}
+      - FORGEJO__actions__ENABLED={{ forgejo_actions_enabled | lower }}
+      - FORGEJO__actions__DEFAULT_ACTIONS_URL={{ forgejo_actions_default_url }}
+    volumes:
+      - {{ forgejo_data_dir }}:/data
+    ports:
+      - "{{ forgejo_bind_address }}:{{ forgejo_http_port }}:{{ forgejo_http_port }}"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - forgejo-net
+
+  db:
+    image: {{ postgres_image }}
+    container_name: forgejo-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - {{ forgejo_db_data_dir }}:/var/lib/postgresql/data
+    # Sans ce contrôle, Forgejo démarre avant que PostgreSQL n'accepte les
+    # connexions et échoue sa migration initiale.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - forgejo-net
+
+networks:
+  forgejo-net:

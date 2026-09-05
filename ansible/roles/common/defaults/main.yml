@@ -53,6 +53,13 @@ common_fail2ban_maxretry: 5
 # Ne jamais se bannir soi-même depuis le LAN.
 common_fail2ban_ignoreip: "127.0.0.1/8 ::1 192.168.0.0/16 10.0.0.0/8"
 
+# fail2ban ajoute d'office les adresses des interfaces de la machine à la
+# liste d'exemption. C'est ce qu'on veut en production, mais c'est aussi ce qui
+# rend une jail impossible à éprouver : une tentative depuis la machine
+# elle-même n'est jamais comptée, et une jail muette est indiscernable d'une
+# jail qui fonctionne. La CI passe cette valeur à false pour pouvoir mesurer.
+common_fail2ban_ignoreself: true
+
 # Nom de l'unité systemd du serveur SSH. `ssh.service` sur Debian et Ubuntu,
 # `sshd.service` ailleurs — et c'est ce dernier que le filtre fourni par
 # fail2ban suppose. Une jail qui écoute la mauvaise unité ne bannit jamais

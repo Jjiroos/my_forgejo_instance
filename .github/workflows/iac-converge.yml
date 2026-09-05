@@ -128,20 +128,84 @@ jobs:
           echo "--- ports en écoute"
           sudo ss -lntp | grep -E ':8181|:9443'
 
-      # L'amont (Forgejo, SonarQube) n'est pas déployé par ce playbook : nginx
-      # doit donc répondre 502. C'est le résultat attendu, et il prouve
-      # davantage qu'un 200 — la terminaison TLS, le filtrage par IP et le
-      # relais fonctionnent, seul le service derrière manque.
+      # Deux réponses attendues, et leur différence est le contrôle.
+      #
+      # La forge est déployée par ce playbook : son vhost doit répondre 200 sur
+      # /api/healthz, ce qui prouve d'un coup la terminaison TLS, le relais, et
+      # une application réellement démarrée derrière.
+      #
+      # SonarQube ne l'est pas : son vhost doit répondre 502. Un 502 n'est pas
+      # un échec ici, c'est la preuve que nginx relaie vers un amont absent —
+      # obtenir autre chose signifierait que le vhost ne fait pas ce qu'il dit.
       - name: Vérifier que nginx relaie
         run: |
           # -k : le certificat est auto-signé en CI, et il porte de toute façon
           # forge.ci.invalid, pas 127.0.0.1.
-          for cible in "forgejo:8181" "sonarqube:9443"; do
-            nom=${cible%%:*}; port=${cible##*:}
-            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "https://127.0.0.1:${port}/" || echo "échec")
-            echo "${nom} (${port}, TLS) : ${code}"
-            test "${code}" = "502"
+          code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 https://127.0.0.1:8181/api/healthz || echo échec)
+          echo "forgejo (8181, TLS) /api/healthz : ${code}"
+          test "${code}" = "200"
+
+          code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://127.0.0.1:9443/ || echo échec)
+          echo "sonarqube (9443, TLS) : ${code}"
+          test "${code}" = "502"
+
+      - name: Vérifier la pile Forgejo
+        run: |
+          echo "--- conteneurs"
+          sudo docker compose -f /srv/forgejo/docker-compose.yml ps
+          for c in forgejo forgejo-db; do
+            etat=$(sudo docker inspect -f '{{.State.Status}}' "$c")
+            echo "${c} : ${etat}"
+            test "${etat}" = "running"
           done
+
+          echo "--- santé applicative"
+          sudo curl -sS --max-time 15 http://127.0.0.1:3000/api/healthz | tee /tmp/healthz.json
+          grep -q '"status"' /tmp/healthz.json
+
+          echo "--- compte d'administration créé sans passer par l'assistant web"
+          sudo docker exec -u git forgejo forgejo admin user list --admin | grep -q ci-admin
+
+          echo "--- le port applicatif n'est joignable qu'en loopback"
+          sudo ss -lntp | grep -E '127\.0\.0\.1:3000'
+          ! sudo ss -lntp | grep -E '0\.0\.0\.0:3000'
+
+          echo "--- le fichier d'environnement n'est lisible que par root"
+          droits=$(sudo stat -c '%a %U' /srv/forgejo/.env)
+          echo "/srv/forgejo/.env : ${droits}"
+          test "${droits}" = "600 root"
+          # Le compose est en 0644 : aucune valeur sensible ne doit y figurer.
+          ! grep -q 'jetable-de-CI' /srv/forgejo/docker-compose.yml
+
+      # Le vrai test d'une jail n'est pas qu'elle soit « active ». C'est
+      # qu'elle compte. Une authentification refusée est émise pour de bon, à
+      # travers nginx, puis on vérifie que fail2ban l'a vue — le contrôle qui
+      # aurait attrapé le défaut de la jail sshd des années plus tôt.
+      - name: Vérifier que la jail Forgejo compte réellement
+        run: |
+          sudo fail2ban-client status forgejo
+
+          curl -sk -o /dev/null --max-time 15 \
+            -u "utilisateur-inexistant:mot-de-passe-faux" \
+            https://127.0.0.1:8181/api/v1/user || true
+
+          for _ in $(seq 1 30); do
+            comptes=$(sudo fail2ban-client status forgejo | sed -n 's/.*Total failed:[[:space:]]*\([0-9]\+\).*/\1/p')
+            [ "${comptes:-0}" -ge 1 ] && break
+            sleep 3
+          done
+
+          sudo fail2ban-client status forgejo
+          if [ "${comptes:-0}" -lt 1 ]; then
+            echo "::error::La jail forgejo n'a compté aucun échec après une authentification refusée."
+            echo "--- ce que la forge a journalisé"
+            sudo tail -n 30 /srv/forgejo/data/gitea/log/gitea.log || true
+            echo "--- ce que le filtre reconnaît"
+            sudo fail2ban-regex /srv/forgejo/data/gitea/log/gitea.log \
+              /etc/fail2ban/filter.d/forgejo.conf || true
+            exit 1
+          fi
+          echo "Jail forgejo : ${comptes} échec(s) comptabilisé(s)."
 
       - name: Vérifier le pare-feu
         run: |
@@ -184,4 +248,15 @@ jobs:
           echo "::endgroup::"
           echo "::group::ports"
           sudo ss -lntp || true
+          echo "::endgroup::"
+          echo "::group::conteneurs"
+          sudo docker compose -f /srv/forgejo/docker-compose.yml ps -a || true
+          sudo docker compose -f /srv/forgejo/docker-compose.yml logs --tail 80 || true
+          echo "::endgroup::"
+          echo "::group::journal de la forge"
+          sudo tail -n 80 /srv/forgejo/data/gitea/log/gitea.log || true
+          echo "::endgroup::"
+          echo "::group::jails fail2ban"
+          sudo fail2ban-client status || true
+          sudo fail2ban-client status forgejo || true
           echo "::endgroup::"

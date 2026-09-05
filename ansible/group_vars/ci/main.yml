@@ -19,3 +19,23 @@ forgejo_domain: forge.ci.invalid
 # écouter sur une interface joignable.
 node_lan_ip: 127.0.0.1
 admin_workstation_ip: 127.0.0.1
+
+# ── Forgejo ───────────────────────────────────────────────────
+# Ces valeurs sont fausses et doivent le rester visiblement. La pile est
+# détruite avec le runner à la fin du job ; rien ici ne protège quoi que ce
+# soit, et rien ici ne doit ressembler à un secret qu'on pourrait réutiliser.
+forgejo_db_password: "mot-de-passe-jetable-de-CI-sans-aucune-valeur"
+forgejo_admin_username: ci-admin
+forgejo_admin_password: "compte-jetable-de-CI-sans-aucune-valeur"
+forgejo_admin_email: ci-admin@forge.ci.invalid
+
+# Le runner n'a pas de compte à qui déléguer Docker : tout passe par become.
+docker_users: []
+
+# ── fail2ban observable ───────────────────────────────────────
+# Sans ces deux surcharges, toute tentative émise depuis le runner serait
+# exemptée — et le job ne pourrait pas distinguer une jail qui compte d'une
+# jail qui ne lit rien. C'est exactement le défaut trouvé sur la jail sshd :
+# « active » ne veut pas dire « surveille quelque chose ».
+common_fail2ban_ignoreself: false
+common_fail2ban_ignoreip: "203.0.113.0/24"     # RFC 5737, ne désigne personne

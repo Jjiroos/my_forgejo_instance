@@ -1,0 +1,11 @@
+---
+# Nom distinct de celui du rôle common, à dessein. Ansible partage les
+# handlers entre tous les rôles d'une même play : réutiliser « Recharger
+# fail2ban » ferait dépendre ce rôle d'un autre par un simple homonyme, et
+# deux définitions du même nom se masquent l'une l'autre sans erreur. Le prix
+# de l'indépendance est un redémarrage de plus le jour où les deux rôles
+# changent quelque chose — quelques centaines de millisecondes.
+- name: Recharger fail2ban pour la forge
+  ansible.builtin.systemd:
+    name: fail2ban
+    state: restarted

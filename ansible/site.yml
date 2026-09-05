@@ -9,11 +9,11 @@
   become: true
 
   roles:
-    - { role: common, tags: [common] }
-    - { role: acme,   tags: [acme, tls] }
-    - { role: nginx,  tags: [nginx, tls] }
+    - { role: common,  tags: [common] }
+    - { role: acme,    tags: [acme, tls] }
+    - { role: nginx,   tags: [nginx, tls] }
+    - { role: docker,  tags: [docker] }
+    - { role: forgejo, tags: [forgejo] }
     # À implémenter, dans cet ordre de dépendance :
-    # - docker       moteur + plugin compose
-    # - forgejo      pile docker-compose + app.ini
     # - cgroup_pi    cgroup_enable=memory dans cmdline.txt (Pi uniquement, reboot)
     # - k3s          installation du cluster mono-nœud

@@ -18,6 +18,7 @@ bantime  = {{ common_fail2ban_bantime }}
 findtime = {{ common_fail2ban_findtime }}
 maxretry = {{ common_fail2ban_maxretry }}
 ignoreip = {{ common_fail2ban_ignoreip }}
+ignoreself = {{ common_fail2ban_ignoreself | lower }}
 
 [sshd]
 enabled = true

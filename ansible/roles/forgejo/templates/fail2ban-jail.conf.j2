@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+#
+# Jail de la forge. `port` limite le blocage au port réellement exposé : une
+# adresse bannie ici garde son accès SSH, ce qui évite de se verrouiller
+# dehors sur une erreur de mot de passe répétée depuis un poste distant.
+#
+# Les valeurs générales (bantime par défaut, ignoreip) viennent de
+# 00-defaults.conf, posé par le rôle common et chargé avant celui-ci.
+[forgejo]
+enabled  = true
+filter   = forgejo
+logpath  = {{ forgejo_log_file }}
+port     = {{ forgejo_port }}
+maxretry = {{ forgejo_fail2ban_maxretry }}
+findtime = {{ forgejo_fail2ban_findtime }}
+bantime  = {{ forgejo_fail2ban_bantime }}
