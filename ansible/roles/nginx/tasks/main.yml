@@ -6,10 +6,13 @@
 # La garde ne protège pas d'un doublon avec soi-même — le fichier du rôle est
 # exclu de la recherche — mais d'une zone du périmètre déclarée dans un autre
 # fichier de conf.d/, ce que nginx refuse.
+# Le motif doit être exactement celui de l'inclusion nginx : `*.conf`, et rien
+# d'autre. Un `grep -r` sur le répertoire attraperait les sauvegardes en
+# .conf.backup ou .bak — que nginx ignore — et déclencherait un faux conflit.
 - name: Relever les zones déjà déclarées ailleurs dans conf.d
   ansible.builtin.shell:
     cmd: >-
-      grep -rhoP '(?<=zone=)[A-Za-z0-9_]+(?=:)' /etc/nginx/conf.d/
+      grep -hoP '(?<=zone=)[A-Za-z0-9_]+(?=:)' /etc/nginx/conf.d/*.conf
       --exclude={{ nginx_rate_limit_file | basename | quote }} 2>/dev/null | sort -u || true
   register: nginx_existing_zones
   changed_when: false
