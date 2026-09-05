@@ -19,6 +19,22 @@ Un hôte configuré à la main avant l'IaC a souvent un `jail.d/local.conf` mêl
 
 Cette cohabitation est **inerte, pas transitoirement tolérée** : `jail.d/` est fusionné par ordre alphabétique, et les valeurs sont identiques. Vérifié sur l'hôte — `bantime=600`, `maxretry=5`, jails `sshd` et `forgejo` actives, avec ou sans `00-defaults.conf`. Il n'y a donc rien à retirer à la main ; `local.conf` disparaîtra quand le rôle `forgejo` reprendra sa jail.
 
+### Le piège du `journalmatch`
+
+Une jail `sshd` peut être *active*, correctement configurée en apparence, et ne jamais rien bannir. Deux conditions doivent être réunies, pas une :
+
+1. **`backend = systemd`** — Debian 12 n'écrit plus `/var/log/auth.log`. Sans cela, la jail lit un fichier qui n'existe pas.
+2. **`journalmatch` corrigé** — le filtre fourni par fail2ban cherche `_SYSTEMD_UNIT=sshd.service`, or Debian et Ubuntu nomment l'unité **`ssh.service`**. Le match ne correspond jamais.
+
+Mesuré sur piserv, avant correction : une authentification refusée (`Invalid user … from 127.0.0.1`, bien présente dans le journal sous `_SYSTEMD_UNIT=ssh.service`) laissait `Total failed: 0`. Le rôle pose donc `journalmatch` explicitement, réglable par `common_fail2ban_sshd_journalmatch` pour les distributions qui, elles, nomment bien l'unité `sshd.service`.
+
+Contrôle en une commande :
+
+```bash
+sudo fail2ban-client get sshd journalmatch     # doit citer ssh.service
+sudo fail2ban-client status sshd               # Total failed doit bouger après un échec réel
+```
+
 ## Points de vigilance
 
 - **`backend = systemd` sur la jail sshd.** Debian 12 n'écrit plus `/var/log/auth.log`. Sans ce réglage, la jail démarre, ne lit rien et ne bannit jamais personne — silencieusement.

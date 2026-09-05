@@ -1,10 +1,12 @@
+---
 - name: Vérifier que le profil d'hôte est déclaré
   ansible.builtin.assert:
-    that: host_profile is defined
+    that: host_profile | default('') in common_host_profiles
     fail_msg: >-
-      host_profile doit être défini dans l'inventaire (raspberry_pi ou
-      generic_amd64). Plusieurs rôles s'en servent pour conditionner ce qui
-      est spécifique au Raspberry Pi.
+      host_profile doit être défini dans l'inventaire et valoir l'une de ces
+      valeurs : {{ common_host_profiles | join(', ') }}. Plusieurs rôles s'en
+      servent pour conditionner ce qui est spécifique au Raspberry Pi — un
+      arm64 générique n'est pas un Pi et ne doit pas en hériter.
     quiet: true
 
 - name: Installer les paquets de base

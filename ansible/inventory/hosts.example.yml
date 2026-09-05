@@ -1,3 +1,4 @@
+---
 # Copier en `hosts.yml` (ignoré par git) et renseigner.
 #
 #   cp ansible/inventory/hosts.example.yml ansible/inventory/hosts.yml
@@ -12,8 +13,10 @@ all:
         piserv:
           ansible_host: <IP_LAN_DU_SERVEUR>
           ansible_user: <UTILISATEUR_SSH>
-          # Renseigné automatiquement par les faits ; forcé ici pour que les
-          # conditionnels spécifiques au Raspberry Pi soient testables.
+          # raspberry_pi | generic_amd64 | generic_arm64. Déclaré à la main
+          # plutôt que déduit des faits : un arm64 générique a la même
+          # architecture qu'un Pi sans en avoir l'amorçage, et c'est
+          # précisément ce que le profil sert à distinguer.
           host_profile: raspberry_pi
 
           # Valeurs propres à l'installation — c'est pour elles que ce fichier

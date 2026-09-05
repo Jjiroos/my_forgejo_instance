@@ -1,3 +1,14 @@
+---
+# ── Profils d'hôte ────────────────────────────────────────────
+# Le profil décrit la machine, pas son rôle. Il ne sert qu'à conditionner ce
+# qui dépend réellement du matériel — sur un Pi, le cgroup mémoire à activer
+# dans cmdline.txt. Un arm64 générique (VM, runner de CI) partage
+# l'architecture du Pi mais rien de son amorçage : d'où trois valeurs.
+common_host_profiles:
+  - raspberry_pi
+  - generic_amd64
+  - generic_arm64
+
 # ── Paquets de base ───────────────────────────────────────────
 # Volontairement minimal : chaque rôle installe ce qui lui est propre.
 # Ce qu'on trouve ici est ce dont tout le reste dépend.
@@ -41,6 +52,12 @@ common_fail2ban_findtime: 10m
 common_fail2ban_maxretry: 5
 # Ne jamais se bannir soi-même depuis le LAN.
 common_fail2ban_ignoreip: "127.0.0.1/8 ::1 192.168.0.0/16 10.0.0.0/8"
+
+# Nom de l'unité systemd du serveur SSH. `ssh.service` sur Debian et Ubuntu,
+# `sshd.service` ailleurs — et c'est ce dernier que le filtre fourni par
+# fail2ban suppose. Une jail qui écoute la mauvaise unité ne bannit jamais
+# personne sans jamais le dire.
+common_fail2ban_sshd_journalmatch: "_SYSTEMD_UNIT=ssh.service + _COMM=sshd"
 
 # Fichiers de configuration fail2ban antérieurs à l'IaC. Ils sont signalés, pas
 # supprimés : ils portent encore des jails qu'aucun rôle ne revendique.

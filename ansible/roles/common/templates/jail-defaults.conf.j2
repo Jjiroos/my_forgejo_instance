@@ -7,6 +7,12 @@
 # Debian 12 n'écrit plus /var/log/auth.log — journald uniquement. La jail sshd
 # doit donc utiliser le backend systemd, sinon elle démarre sans rien lire et
 # ne bannit jamais personne, silencieusement.
+#
+# Le backend ne suffit pas. Le filtre sshd fourni par fail2ban cherche
+# `_SYSTEMD_UNIT=sshd.service`, alors que Debian et Ubuntu nomment l'unité
+# `ssh.service`. La jail démarre, s'affiche « active », et compte zéro échec
+# quoi qu'il arrive. D'où le journalmatch explicite ci-dessous — vérifiable
+# avec `fail2ban-client get sshd journalmatch`.
 [DEFAULT]
 bantime  = {{ common_fail2ban_bantime }}
 findtime = {{ common_fail2ban_findtime }}
@@ -16,3 +22,4 @@ ignoreip = {{ common_fail2ban_ignoreip }}
 [sshd]
 enabled = true
 backend = systemd
+journalmatch = {{ common_fail2ban_sshd_journalmatch }}
