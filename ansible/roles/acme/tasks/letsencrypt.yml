@@ -1,0 +1,79 @@
+---
+- name: Vérifier que l'adresse de contact est renseignée
+  ansible.builtin.assert:
+    that: acme_email | length > 0
+    fail_msg: "acme_email doit être défini — Let's Encrypt l'exige à la création du compte."
+    quiet: true
+
+- name: Vérifier qu'un jeton DuckDNS est disponible
+  ansible.builtin.assert:
+    that: acme_duckdns_token | default('') | length > 0
+    fail_msg: >-
+      acme_duckdns_token est vide. Il provient du fichier SOPS
+      (secrets/piserv.sops.yaml, clé acme.duckdns_token).
+    quiet: true
+  no_log: true
+
+- name: Vérifier si acme.sh est déjà installé
+  ansible.builtin.stat:
+    path: "{{ acme_home }}/acme.sh"
+  register: acme_installed
+
+# Téléchargement explicite plutôt que `curl | sh` : le script atterrit sur le
+# disque avant d'être exécuté, donc il est inspectable en cas de doute et la
+# tâche échoue sur une erreur réseau au lieu d'exécuter une page d'erreur.
+- name: Télécharger l'installateur acme.sh
+  ansible.builtin.get_url:
+    url: https://get.acme.sh
+    dest: /tmp/acme-install.sh
+    mode: "0700"
+  when: not acme_installed.stat.exists
+
+# L'installateur pose aussi le cron de renouvellement. On ne le rejoue pas
+# s'il a déjà tourné : il est idempotent mais bruyant.
+- name: Installer acme.sh
+  ansible.builtin.command:
+    cmd: "/tmp/acme-install.sh email={{ acme_email }}"
+    creates: "{{ acme_home }}/acme.sh"
+  when: not acme_installed.stat.exists
+
+- name: Retirer l'installateur
+  ansible.builtin.file:
+    path: /tmp/acme-install.sh
+    state: absent
+
+- name: Choisir Let's Encrypt comme autorité par défaut
+  ansible.builtin.command:
+    cmd: "{{ acme_home }}/acme.sh --set-default-ca --server {{ acme_ca_server }}"
+  register: acme_ca
+  changed_when: "'Changed default CA' in acme_ca.stdout"
+
+- name: Émettre les certificats
+  ansible.builtin.command:
+    cmd: >-
+      {{ acme_home }}/acme.sh --issue --dns dns_duckdns
+      {% for d in item.domains %}-d {{ d | quote }} {% endfor %}
+    creates: "{{ acme_home }}/{{ item.domains[0] }}_ecc/fullchain.cer"
+  environment:
+    # ⚠️ CamelCase impératif. DUCKDNS_TOKEN est ignoré en silence : acme.sh
+    # échoue alors sur une erreur de validation DNS sans jamais dire pourquoi.
+    DuckDNS_Token: "{{ acme_duckdns_token }}"
+  loop: "{{ acme_certificates }}"
+  loop_control:
+    label: "{{ item.name }} → {{ item.domains | join(', ') }}"
+  no_log: true
+
+# --install-cert est réexécuté à chaque passage : c'est lui qui fixe les
+# chemins de destination et la commande de rechargement, et acme.sh les
+# réécrit dans sa configuration sans effet de bord.
+- name: Installer les certificats et armer le rechargement automatique
+  ansible.builtin.command:
+    cmd: >-
+      {{ acme_home }}/acme.sh --install-cert -d {{ item.domains[0] | quote }}
+      --key-file       {{ acme_cert_dir }}/{{ item.name }}.key
+      --fullchain-file {{ acme_cert_dir }}/{{ item.name }}.crt
+      --reloadcmd      "systemctl reload nginx"
+  loop: "{{ acme_certificates }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false

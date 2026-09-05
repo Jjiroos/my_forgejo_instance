@@ -1,0 +1,18 @@
+---
+# Cible de la CI : le runner GitHub lui-même.
+#
+# Un runner hébergé est une VM neuve à chaque exécution — c'est exactement la
+# « machine jetable » qu'on voulait pour valider un déploiement depuis zéro,
+# sans jamais approcher un serveur réel.
+#
+# Ce fichier est versionné : il ne contient aucune valeur propre à une
+# installation, uniquement des valeurs de test.
+all:
+  children:
+    forge:
+      hosts:
+        ci-runner:
+          ansible_connection: local
+    ci:
+      hosts:
+        ci-runner:

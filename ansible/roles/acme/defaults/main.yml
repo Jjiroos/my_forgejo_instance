@@ -1,8 +1,13 @@
+---
 # Certificats Let's Encrypt validés par DNS-01 sur DuckDNS.
 #
 # DNS-01 plutôt que HTTP-01 : la validation ne demande aucun port ouvert
 # depuis Internet. C'est ce qui permet de certifier des services qui ne sont
 # joignables que depuis le LAN — comme SonarQube.
+# letsencrypt : certificat réel, validé en DNS-01 sur DuckDNS.
+# selfsigned  : pour la CI, où aucun jeton de compte personnel n'a sa place.
+acme_mode: letsencrypt
+
 acme_home: /root/.acme.sh
 acme_ca_server: letsencrypt
 acme_cert_dir: /etc/nginx/ssl

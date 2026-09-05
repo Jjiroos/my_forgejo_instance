@@ -1,0 +1,41 @@
+---
+- name: Installer la dépendance de génération de certificats
+  ansible.builtin.apt:
+    name: python3-cryptography
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Générer les clés privées
+  community.crypto.openssl_privatekey:
+    path: "{{ acme_cert_dir }}/{{ item.name }}.key"
+    size: 2048
+    mode: "0640"
+  loop: "{{ acme_certificates }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Générer les demandes de signature
+  community.crypto.openssl_csr:
+    path: "{{ acme_cert_dir }}/{{ item.name }}.csr"
+    privatekey_path: "{{ acme_cert_dir }}/{{ item.name }}.key"
+    common_name: "{{ item.domains[0] }}"
+    subject_alt_name: "{{ item.domains | map('regex_replace', '^', 'DNS:') | list }}"
+    mode: "0644"
+  loop: "{{ acme_certificates }}"
+  loop_control:
+    label: "{{ item.name }} → {{ item.domains | join(', ') }}"
+
+- name: Auto-signer les certificats
+  community.crypto.x509_certificate:
+    path: "{{ acme_cert_dir }}/{{ item.name }}.crt"
+    privatekey_path: "{{ acme_cert_dir }}/{{ item.name }}.key"
+    csr_path: "{{ acme_cert_dir }}/{{ item.name }}.csr"
+    provider: selfsigned
+    # Idempotence : le module ne régénère que si le certificat manque, ne
+    # correspond plus à la clé, ou arrive à expiration.
+    selfsigned_not_after: "+365d"
+    mode: "0644"
+  loop: "{{ acme_certificates }}"
+  loop_control:
+    label: "{{ item.name }}"

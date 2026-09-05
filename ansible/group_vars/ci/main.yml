@@ -1,0 +1,21 @@
+---
+# Surcharges propres à la CI. Ces valeurs sont fictives par construction :
+# aucune ne correspond à une installation réelle.
+
+# Renseigné par le workflow selon l'architecture du runner.
+host_profile: "{{ lookup('env', 'CI_HOST_PROFILE') | default('generic_amd64', true) }}"
+
+# Émettre un vrai certificat exigerait le jeton DuckDNS d'un compte personnel.
+# Le mode auto-signé produit les mêmes fichiers aux mêmes chemins, ce qui suffit
+# à éprouver le rôle nginx.
+acme_mode: selfsigned
+acme_email: ci@example.invalid
+
+# `.invalid` est réservé par la RFC 2606 : ce nom ne peut résoudre nulle part,
+# aucune requête ne peut donc fuir vers un domaine réel par accident.
+forgejo_domain: forge.ci.invalid
+
+# Tout est en loopback : le runner n'a pas d'IP LAN stable, et rien ne doit
+# écouter sur une interface joignable.
+node_lan_ip: 127.0.0.1
+admin_workstation_ip: 127.0.0.1
