@@ -135,6 +135,40 @@ Dans Forgejo, sur le dépôt à analyser : *Paramètres → Actions → Secrets*
 
 > Un secret d'**utilisateur** ou d'**organisation** (*Paramètres du compte → Actions → Secrets*) évite de le répéter sur chaque dépôt — le bon choix dès qu'on a plus d'un projet à analyser.
 
+### ⚠️ Secrets et Variables ne sont pas la même chose
+
+Forgejo sépare en deux objets ce que GitLab réunit dans une seule liste cochable :
+
+| | **Secrets** | **Variables** |
+|---|---|---|
+| Stockage | **chiffré** (AES-GCM, clé dérivée de `SECRET_KEY`) | **en clair** |
+| Relecture | impossible — *write-only* | affichée et éditable |
+| Masquage dans les logs de job | oui | **non** |
+| Contexte du workflow | `${{ secrets.NOM }}` | `${{ vars.NOM }}` |
+
+Les deux contextes sont **étanches** : une variable nommée `SONAR_TOKEN` n'alimente pas `${{ secrets.SONAR_TOKEN }}`, le job reçoit une chaîne vide et échoue comme si le secret n'existait pas.
+
+Le piège vient des portées, qui sont asymétriques :
+
+| Portée | Secrets | Variables |
+|---|---|---|
+| Dépôt | ✅ | ✅ |
+| Organisation | ✅ | ✅ |
+| Utilisateur | ✅ | ✅ |
+| **Instance** (*Site Administration → Actions*) | **❌ n'existe pas** | ✅ |
+
+La page d'administration ne propose donc **que** des Variables : c'est l'endroit le plus naturel où aller, et le seul qui ne puisse pas convenir. Pour un secret valable sur tous ses dépôts, la portée la plus large est le **niveau utilisateur** (`/user/settings/actions/secrets`).
+
+Vérification en une requête — la colonne `data` d'un secret est chiffrée, celle d'une variable ne l'est pas :
+
+```bash
+docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+  -c "SELECT name, owner_id, repo_id FROM secret;" \
+  -c "SELECT name, owner_id, repo_id FROM action_variable;"
+```
+
+L'API le confirme aussi : les secrets n'exposent que `PUT` et `DELETE`, jamais de `GET`.
+
 Copier ensuite [`examples/workflows/sonar-analysis.yml`](examples/workflows/sonar-analysis.yml) dans `.forgejo/workflows/` du dépôt, et pousser.
 
 ### L'action officielle fonctionne aussi en arm64
@@ -281,7 +315,13 @@ Caused by: java.lang.IllegalArgumentException:
     Expected URL scheme 'http' or 'https' but no scheme was found for /api/s...
 ```
 
-Le message donne l'impression d'un problème réseau, mais il dit l'inverse : le scanner a construit l'URL `/api/server/version` **sans hôte**. `SONAR_HOST_URL` arrive donc **vide** dans le job — secret absent, mal orthographié, ou non exposé à l'étape (une `action` a besoin de le recevoir explicitement via `env:`).
+Le message donne l'impression d'un problème réseau, mais il dit l'inverse : le scanner a construit l'URL `/api/server/version` **sans hôte**. `SONAR_HOST_URL` arrive donc **vide** dans le job.
+
+Par ordre de fréquence :
+
+1. **Créé comme *Variable* au lieu de *Secret*** — de loin la cause la plus courante, parce que la page d'administration ne propose que des Variables. Voir [§5](#-secrets-et-variables-ne-sont-pas-la-même-chose).
+2. Secret absent ou mal orthographié.
+3. Secret non transmis à l'étape : une `action` ne voit pas les secrets automatiquement, il faut les lui passer via `env:`.
 
 Vérifier que les secrets existent bien :
 
