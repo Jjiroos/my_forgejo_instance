@@ -8,11 +8,11 @@
   become: true
 
   roles:
-    - common
+    - { role: common, tags: [common] }
+    - { role: acme,   tags: [acme, tls] }
+    - { role: nginx,  tags: [nginx, tls] }
     # À implémenter, dans cet ordre de dépendance :
-    # - cgroup_pi    cgroup_enable=memory dans cmdline.txt (Pi uniquement, reboot)
     # - docker       moteur + plugin compose
-    # - acme         acme.sh + certificat DuckDNS en DNS-01
-    # - nginx        vhosts forge et SonarQube
     # - forgejo      pile docker-compose + app.ini
+    # - cgroup_pi    cgroup_enable=memory dans cmdline.txt (Pi uniquement, reboot)
     # - k3s          installation du cluster mono-nœud

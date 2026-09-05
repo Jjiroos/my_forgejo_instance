@@ -1,0 +1,48 @@
+# Mécanisme générique de publication d'un service derrière nginx.
+#
+# Le rôle ne connaît aucun site en particulier : il consomme `nginx_sites`.
+# Publier un service supplémentaire = ajouter une entrée, rien d'autre.
+
+nginx_cert_dir: /etc/nginx/ssl
+nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
+nginx_ssl_ciphers: "HIGH:!aNULL:!MD5"
+
+# Zones de limitation de débit, déclarées dans le contexte http.
+#   - { name: forgejo_login, size: 10m, rate: "5r/m" }
+#
+# Elles vont dans un fichier qui n'appartient qu'à ce rôle : conf.d/ peut
+# contenir des zones de services hors périmètre, qu'un template exhaustif
+# effacerait sans prévenir.
+nginx_rate_limit_file: /etc/nginx/conf.d/10-forge-rate-limit.conf
+nginx_rate_limit_zones: []
+
+# Sites à publier. Schéma d'une entrée :
+#
+#   name:        identifiant — nomme le vhost et les journaux
+#   domain:      server_name, et nom porté par le certificat
+#   listen:
+#     port:      port d'écoute
+#     address:   IP d'écoute. Une IP LAN rend l'exposition accidentelle
+#                impossible, y compris si la box redirigeait le port.
+#   cert:        nom du certificat dans nginx_cert_dir (sans extension)
+#   upstream:    service en amont, ex. http://127.0.0.1:3000
+#   allow:       liste d'IP autorisées. Non vide ⇒ `deny all` implicite.
+#   ufw:         { manage: true, from: any | <ip> }
+#   locations:   locations supplémentaires, insérées avant le `/` par défaut
+#
+# Un même certificat peut servir plusieurs sites : c'est le cas quand deux
+# services partagent un nom d'hôte sur deux ports.
+nginx_sites: []
+
+# Valeurs par défaut d'un site, fusionnées avec chaque entrée.
+nginx_site_defaults:
+  client_max_body_size: 50m
+  proxy_timeout: 600s
+  websockets: false
+  hsts: true
+  frame_options: DENY
+  allow: []
+  locations: []
+  ufw:
+    manage: true
+    from: any

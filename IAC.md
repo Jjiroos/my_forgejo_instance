@@ -196,9 +196,9 @@ Les données ne sont jamais concernées : dépôts git, base PostgreSQL, volumes
 | Étape | Contenu | État |
 |---|---|---|
 | 0 | Outillage, chaîne SOPS/age, squelette, validation des providers en arm64 | **fait** |
-| 1 | Rôle `common` : paquets, sysctl, UFW, fail2ban | à faire |
-| 2 | Rôle `docker`, puis `acme` et `nginx` — **le mécanisme générique de publication d'un site** | à faire |
-| 3 | Rôle `forgejo` : pile docker-compose, premier site consommateur du mécanisme | à faire |
+| 1 | Rôle `common` : paquets, sysctl, UFW, fail2ban | **fait** |
+| 2 | Rôles `acme` et `nginx` — **le mécanisme générique de publication d'un site** | **écrit, éprouvé à blanc** |
+| 3 | Rôles `docker` et `forgejo` : pile docker-compose | à faire |
 | 4 | Rôles `cgroup_pi` et `k3s` | à faire |
 | 5 | `tofu/00-cluster` : migration des manifestes de `k3s/` | à faire |
 | 6 | `tofu/10-forgejo` et `tofu/20-analysis` — SonarQube devient le second site | à faire |
@@ -206,6 +206,17 @@ Les données ne sont jamais concernées : dépôts git, base PostgreSQL, volumes
 | 8 | Validation complète sur la VM amd64 | à faire |
 
 Les étapes 2 et 3 sont le cœur de la valeur : une fois le couple `acme` + `nginx` paramétré par une liste de sites, publier un nouveau service revient à ajouter une entrée. Forgejo puis SonarQube servent à démontrer que le mécanisme tient sur deux cas réels — l'un exposé sur Internet, l'autre restreint au LAN.
+
+### Reprise de l'existant : ce qu'il reste à débloquer
+
+Les rôles sont éprouvés en `--check` contre le serveur, mais leur première application réelle demande deux gestes manuels. Ils ne sont pas des oublis : ce sont les points où l'IaC prend possession de fichiers écrits à la main.
+
+| À faire | Pourquoi |
+|---|---|
+| Retirer `forgejo_login` de `conf.d/00-rate-limit.conf`, y laisser les zones hors périmètre | nginx refuse une zone déclarée deux fois. Le rôle s'arrête de lui-même sur ce conflit plutôt que de produire une configuration invalide |
+| Retirer `[DEFAULT]`, `[sshd]` et la jail `forgejo` de `jail.d/local.conf` | reprises par `00-defaults.conf` et, plus tard, par le rôle `forgejo` |
+
+Aucun des deux n'est urgent : tant qu'ils ne sont pas faits, le rôle `nginx` refuse de s'appliquer et `common` produit un doublon sans effet.
 
 ---
 

@@ -16,6 +16,14 @@ all:
           # conditionnels spécifiques au Raspberry Pi soient testables.
           host_profile: raspberry_pi
 
+          # Valeurs propres à l'installation — c'est pour elles que ce fichier
+          # n'est pas versionné.
+          forgejo_domain:       <SOUS_DOMAINE>.duckdns.org
+          node_lan_ip:          <IP_LAN_DU_SERVEUR>
+          admin_workstation_ip: <IP_DU_POSTE_ADMIN>
+          acme_email:           <ADRESSE_DE_CONTACT>
+          acme_duckdns_token:   "{{ lookup('community.sops', '../secrets/piserv.sops.yaml') | from_yaml | json_query('acme.duckdns_token') }}"
+
         vmtest:
           ansible_host: <IP_DE_LA_VM>
           ansible_user: <UTILISATEUR_SSH>

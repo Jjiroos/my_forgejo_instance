@@ -1,0 +1,100 @@
+- name: Installer nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+
+# Le rôle écrit dans SON fichier, jamais dans un fichier partagé : conf.d/
+# peut contenir des zones appartenant à des services hors périmètre, qu'un
+# template exhaustif effacerait silencieusement.
+- name: Relever les zones déjà déclarées ailleurs dans conf.d
+  ansible.builtin.shell:
+    cmd: >-
+      grep -rhoP '(?<=zone=)[A-Za-z0-9_]+(?=:)' /etc/nginx/conf.d/
+      --exclude={{ nginx_rate_limit_file | basename | quote }} 2>/dev/null | sort -u || true
+  register: nginx_existing_zones
+  changed_when: false
+  check_mode: false
+
+# Deux déclarations d'une même zone font échouer nginx au démarrage. Mieux
+# vaut s'arrêter ici avec un message clair que laisser `nginx -t` refuser un
+# fichier sans expliquer d'où vient le doublon.
+- name: Refuser un conflit de nom de zone
+  ansible.builtin.assert:
+    that: nginx_rate_limit_zones | map(attribute='name') | select('in', nginx_existing_zones.stdout_lines) | list | length == 0
+    fail_msg: >-
+      Ces zones sont déjà déclarées ailleurs dans /etc/nginx/conf.d/ :
+      {{ nginx_rate_limit_zones | map(attribute='name') | select('in', nginx_existing_zones.stdout_lines) | list | join(', ') }}.
+      nginx refuse une zone déclarée deux fois. Les retirer du fichier
+      historique — en y laissant celles des services hors périmètre.
+    quiet: true
+  when: nginx_rate_limit_zones | length > 0
+
+- name: Déclarer les zones de limitation de débit
+  ansible.builtin.template:
+    src: rate-limit.conf.j2
+    dest: "{{ nginx_rate_limit_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    # Une configuration invalide n'atteint jamais le disque : nginx -t est
+    # exécuté sur le fichier candidat avant de le mettre en place.
+    validate: "nginx -t -c /etc/nginx/nginx.conf"
+  when: nginx_rate_limit_zones | length > 0
+  notify: Recharger nginx
+
+- name: Écrire les vhosts
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: "/etc/nginx/sites-available/{{ site.name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ nginx_sites }}"
+  loop_control:
+    label: "{{ site.name }} → {{ site.listen.address }}:{{ site.listen.port }}"
+    loop_var: site
+  notify: Recharger nginx
+
+- name: Activer les vhosts
+  ansible.builtin.file:
+    src: "/etc/nginx/sites-available/{{ item.name }}"
+    dest: "/etc/nginx/sites-enabled/{{ item.name }}"
+    state: link
+  loop: "{{ nginx_sites }}"
+  loop_control:
+    label: "{{ item.name }}"
+  notify: Recharger nginx
+
+# Le vhost par défaut de Debian écoute sur le port 80 et répond à tout nom non
+# reconnu. Rien ne le sert ici.
+- name: Désactiver le vhost par défaut
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Recharger nginx
+
+# Validation globale : les templates individuels ne voient pas les conflits
+# entre vhosts (deux sites sur la même paire adresse:port, par exemple).
+- name: Valider la configuration complète
+  ansible.builtin.command:
+    cmd: nginx -t
+  changed_when: false
+  check_mode: false
+
+- name: Ouvrir les ports des sites dans UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.listen.port | string }}"
+    proto: tcp
+    from_ip: "{{ (nginx_site_defaults | combine(item, recursive=True)).ufw.from }}"
+    comment: "nginx — {{ item.name }}"
+  loop: "{{ nginx_sites }}"
+  loop_control:
+    label: "{{ item.name }} : {{ item.listen.port }}/tcp"
+  when: (nginx_site_defaults | combine(item, recursive=True)).ufw.manage
+
+- name: Activer nginx
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started

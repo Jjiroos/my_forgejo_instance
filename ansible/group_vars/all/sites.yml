@@ -1,0 +1,53 @@
+# Déclaration des services publiés. Ce fichier est versionné : il ne contient
+# que des références, jamais de valeur propre à une installation. Les valeurs
+# (domaine, IP, adresse de contact) viennent de l'inventaire, hors dépôt.
+
+# ── Certificats ───────────────────────────────────────────────
+# Un seul certificat suffit : les deux services partagent le nom d'hôte et ne
+# diffèrent que par le port.
+acme_certificates:
+  - name: forgejo
+    domains:
+      - "{{ forgejo_domain }}"
+
+# ── Limitation de débit ───────────────────────────────────────
+nginx_rate_limit_zones:
+  - { name: forgejo_login, size: 10m, rate: "5r/m" }
+
+# ── Sites publiés ─────────────────────────────────────────────
+nginx_sites:
+  # Seul service exposé sur Internet, via la redirection de port de la box.
+  - name: forgejo
+    domain: "{{ forgejo_domain }}"
+    listen:
+      address: "0.0.0.0"
+      port: "{{ forgejo_port }}"
+    cert: forgejo
+    upstream: "http://127.0.0.1:3000"
+    client_max_body_size: 500m
+    proxy_request_buffering_off: true    # dépôts volumineux, LFS
+    websockets: true
+    ufw:
+      manage: true
+      from: any
+    locations:
+      # Anti-force brute sur la connexion. fail2ban prend le relais au-delà.
+      - path: "= /user/login"
+        rate_limit: { zone: forgejo_login, burst: 5 }
+
+  # Strictement LAN : le port n'est pas redirigé par la box, l'écoute est liée
+  # à l'IP LAN, et l'accès est restreint au poste d'administration.
+  - name: sonarqube
+    domain: "{{ forgejo_domain }}"
+    listen:
+      address: "{{ node_lan_ip }}"
+      port: "{{ sonarqube_tls_port }}"
+    cert: forgejo
+    upstream: "http://{{ node_lan_ip }}:{{ sonarqube_port }}"
+    client_max_body_size: 50m
+    allow:
+      - "{{ admin_workstation_ip }}"
+      - "{{ node_lan_ip }}"
+    ufw:
+      manage: true
+      from: "{{ admin_workstation_ip }}"

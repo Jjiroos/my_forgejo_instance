@@ -1,0 +1,5 @@
+# {{ ansible_managed }}
+# Zones de limitation de débit, contexte http. Référencées par les vhosts.
+{% for z in nginx_rate_limit_zones %}
+limit_req_zone $binary_remote_addr zone={{ z.name }}:{{ z.size }} rate={{ z.rate }};
+{% endfor %}

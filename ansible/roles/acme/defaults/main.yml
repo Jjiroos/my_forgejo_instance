@@ -1,0 +1,17 @@
+# Certificats Let's Encrypt validés par DNS-01 sur DuckDNS.
+#
+# DNS-01 plutôt que HTTP-01 : la validation ne demande aucun port ouvert
+# depuis Internet. C'est ce qui permet de certifier des services qui ne sont
+# joignables que depuis le LAN — comme SonarQube.
+acme_home: /root/.acme.sh
+acme_ca_server: letsencrypt
+acme_cert_dir: /etc/nginx/ssl
+acme_email: ""            # obligatoire, à renseigner dans group_vars
+
+# Liste des certificats à émettre. Un certificat peut servir plusieurs vhosts :
+# c'est le cas ici, le même nom d'hôte portant la forge et SonarQube sur deux
+# ports différents.
+#
+#   - name: forgejo                     nom des fichiers dans acme_cert_dir
+#     domains: [forge.exemple.org]      premier domaine = identifiant acme.sh
+acme_certificates: []
