@@ -1,3 +1,4 @@
+---
 - name: Installer nginx
   ansible.builtin.apt:
     name: nginx
@@ -32,57 +33,123 @@
     quiet: true
   when: nginx_rate_limit_zones | length > 0
 
-- name: Déclarer les zones de limitation de débit
-  ansible.builtin.template:
-    src: rate-limit.conf.j2
-    dest: "{{ nginx_rate_limit_file }}"
-    owner: root
-    group: root
-    mode: "0644"
-    # Une configuration invalide n'atteint jamais le disque : nginx -t est
-    # exécuté sur le fichier candidat avant de le mettre en place.
-    validate: "nginx -t -c /etc/nginx/nginx.conf"
-  when: nginx_rate_limit_zones | length > 0
-  notify: Recharger nginx
+# ── Écriture de la configuration ──────────────────────────────
+#
+# Le `validate:` de `template` ne convient pas ici : il exige un `%s` et lance
+# la commande sur le fichier candidat seul. Or ni un fragment de conf.d/ ni un
+# vhost ne se valident hors contexte — `nginx -t -c <fragment>` le lirait comme
+# un nginx.conf complet et échouerait toujours.
+#
+# La configuration est donc validée en bloc, et le rescue défait ce que cette
+# exécution a posé. L'ordre importe : un fichier de sites-available/ est inerte
+# tant qu'il n'est pas lié dans sites-enabled/. Les seules écritures qui
+# engagent réellement nginx sont le fichier de zones (conf.d/ est inclus) et
+# les liens — ce sont exactement les deux que le rescue sait annuler.
+- name: Publier la configuration nginx
+  block:
+    - name: Déclarer les zones de limitation de débit
+      ansible.builtin.template:
+        src: rate-limit.conf.j2
+        dest: "{{ nginx_rate_limit_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      when: nginx_rate_limit_zones | length > 0
+      register: nginx_zone_file
+      notify: Recharger nginx
 
-- name: Écrire les vhosts
-  ansible.builtin.template:
-    src: site.conf.j2
-    dest: "/etc/nginx/sites-available/{{ site.name }}"
-    owner: root
-    group: root
-    mode: "0644"
-  loop: "{{ nginx_sites }}"
-  loop_control:
-    label: "{{ site.name }} → {{ site.listen.address }}:{{ site.listen.port }}"
-    loop_var: site
-  notify: Recharger nginx
+    # Inerte à ce stade : nginx ne lit que sites-enabled/.
+    - name: Écrire les vhosts
+      ansible.builtin.template:
+        src: site.conf.j2
+        dest: "/etc/nginx/sites-available/{{ site.name }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop: "{{ nginx_sites }}"
+      loop_control:
+        label: "{{ site.name }} → {{ site.listen.address }}:{{ site.listen.port }}"
+        loop_var: site
+      notify: Recharger nginx
 
-- name: Activer les vhosts
-  ansible.builtin.file:
-    src: "/etc/nginx/sites-available/{{ item.name }}"
-    dest: "/etc/nginx/sites-enabled/{{ item.name }}"
-    state: link
-  loop: "{{ nginx_sites }}"
-  loop_control:
-    label: "{{ item.name }}"
-  notify: Recharger nginx
+    - name: Activer les vhosts
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ item.name }}"
+        dest: "/etc/nginx/sites-enabled/{{ item.name }}"
+        state: link
+      loop: "{{ nginx_sites }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: nginx_vhost_links
+      notify: Recharger nginx
 
-# Le vhost par défaut de Debian écoute sur le port 80 et répond à tout nom non
-# reconnu. Rien ne le sert ici.
-- name: Désactiver le vhost par défaut
-  ansible.builtin.file:
-    path: /etc/nginx/sites-enabled/default
-    state: absent
-  notify: Recharger nginx
+    # Le vhost par défaut de Debian écoute sur le port 80 et répond à tout nom
+    # non reconnu. Rien ne le sert ici.
+    - name: Désactiver le vhost par défaut
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Recharger nginx
 
-# Validation globale : les templates individuels ne voient pas les conflits
-# entre vhosts (deux sites sur la même paire adresse:port, par exemple).
-- name: Valider la configuration complète
-  ansible.builtin.command:
-    cmd: nginx -t
-  changed_when: false
-  check_mode: false
+    # Validation globale : un vhost pris isolément ne montre pas les conflits
+    # entre sites — deux fois la même paire adresse:port, une zone référencée
+    # mais jamais déclarée.
+    - name: Valider la configuration complète
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false
+      check_mode: false
+
+  rescue:
+    - name: Restaurer le fichier de zones précédent
+      ansible.builtin.copy:
+        src: "{{ nginx_zone_file.backup_file }}"
+        dest: "{{ nginx_rate_limit_file }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
+      when: nginx_zone_file.backup_file is defined
+
+    # Pas de sauvegarde signifie qu'il n'existait pas avant : le retour en
+    # arrière, c'est sa disparition.
+    - name: Retirer le fichier de zones créé par cette exécution
+      ansible.builtin.file:
+        path: "{{ nginx_rate_limit_file }}"
+        state: absent
+      when:
+        - nginx_zone_file.changed | default(false)
+        - nginx_zone_file.backup_file is not defined
+
+    - name: Désactiver les vhosts activés par cette exécution
+      ansible.builtin.file:
+        path: "{{ item.dest | default(item.path) }}"
+        state: absent
+      loop: "{{ nginx_vhost_links.results | default([]) | selectattr('changed') | list }}"
+      loop_control:
+        label: "{{ item.dest | default(item.path) }}"
+
+    - name: Contrôler l'état après retour arrière
+      ansible.builtin.command:
+        cmd: nginx -t
+      register: nginx_rollback_check
+      changed_when: false
+      failed_when: false
+
+    - name: Signaler l'échec et l'état laissé derrière
+      ansible.builtin.fail:
+        msg: >-
+          La configuration nginx produite est invalide ; ce que cette exécution
+          avait posé a été retiré.
+          {% if nginx_rollback_check.rc == 0 %}
+          La configuration en place est de nouveau valide : nginx redémarrera
+          sans problème.
+          {% else %}
+          ⚠️ `nginx -t` échoue toujours après le retour arrière — la
+          configuration était déjà invalide avant cette exécution :
+          {{ nginx_rollback_check.stderr | trim }}
+          {% endif %}
 
 - name: Ouvrir les ports des sites dans UFW
   community.general.ufw:

@@ -32,9 +32,11 @@ Les deux services de ce dépôt servent de démonstration et couvrent les extrê
 
 ## Sécurité de l'exécution
 
-- **`validate: nginx -t`** sur les fichiers de contexte http : une configuration invalide n'atteint jamais le disque.
-- **Validation globale en fin de rôle** : les templates pris isolément ne voient pas les conflits entre vhosts, comme deux sites sur la même paire adresse:port.
+- **Ordre d'écriture** : un fichier de `sites-available/` est inerte tant qu'il n'est pas lié dans `sites-enabled/`. Les vhosts sont donc tous écrits avant que le premier ne soit activé.
+- **Validation globale, puis retour arrière** : `nginx -t` est lancé une fois la configuration complète en place — c'est le seul moment où les conflits entre vhosts sont visibles, comme deux sites sur la même paire adresse:port. Si elle échoue, un `rescue` retire le fichier de zones et les liens que l'exécution venait de poser, revérifie, et dit dans son message si la machine est repartie sur une configuration valide.
+- **Pourquoi pas `validate:` sur le template** : l'option exige un `%s` et lance la commande sur le fichier candidat seul. Ni un fragment de `conf.d/` ni un vhost ne se valident hors contexte — `nginx -t -c <fragment>` le lirait comme un `nginx.conf` complet et échouerait systématiquement.
 - **Rechargement, pas redémarrage** : les connexions en cours ne sont pas coupées.
+- **Le fichier de zones est sauvegardé avant réécriture** (`backup: true`). Les copies portent un suffixe horodaté qui ne finit pas par `.conf` : nginx ne les inclut pas, et la garde anti-doublon ne les voit pas non plus.
 
 ## Points de vigilance
 
