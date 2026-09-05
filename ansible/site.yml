@@ -7,9 +7,9 @@
   hosts: forge
   become: true
 
-  roles: []
+  roles:
+    - common
     # À implémenter, dans cet ordre de dépendance :
-    # - common       paquets de base, sysctl, UFW, fail2ban
     # - cgroup_pi    cgroup_enable=memory dans cmdline.txt (Pi uniquement, reboot)
     # - docker       moteur + plugin compose
     # - acme         acme.sh + certificat DuckDNS en DNS-01

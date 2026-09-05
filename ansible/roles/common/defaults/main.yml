@@ -1,0 +1,48 @@
+# ── Paquets de base ───────────────────────────────────────────
+# Volontairement minimal : chaque rôle installe ce qui lui est propre.
+# Ce qu'on trouve ici est ce dont tout le reste dépend.
+common_packages:
+  - ca-certificates
+  - curl
+  - git
+  - gnupg
+  - unzip
+  - zstd            # lecture des logs de job Forgejo Actions (.log.zst)
+  - jq
+  - ufw
+  - fail2ban
+
+# ── Réglages noyau ────────────────────────────────────────────
+# Chaque entrée porte son fichier de destination : on converge ainsi sur les
+# fichiers que la documentation décrit déjà, plutôt que d'en créer un doublon
+# qui dirait la même chose ailleurs.
+common_sysctl:
+  - name: vm.max_map_count
+    value: "{{ vm_max_map_count }}"
+    file: /etc/sysctl.d/99-sonarqube.conf
+    comment: "Elasticsearch embarqué dans SonarQube refuse de démarrer en dessous"
+
+# ── Pare-feu ──────────────────────────────────────────────────
+# `routed: deny` est conservé tel quel. Attention à ne pas en déduire que le
+# trafic vers les pods est filtré : k3s insère ses règles avant celles d'UFW
+# dans FORWARD (cf. SETUP-SONARQUBE.md §7).
+common_ufw_policy_incoming: deny
+common_ufw_policy_outgoing: allow
+common_ufw_policy_routed: deny
+
+# Seul SSH est ouvert ici. Chaque service publié ajoute sa propre règle via le
+# rôle qui le déploie — c'est ce qui rend le mécanisme réutilisable.
+common_ufw_rules:
+  - { rule: allow, port: "22", proto: tcp, comment: "SSH" }
+
+# ── fail2ban ──────────────────────────────────────────────────
+common_fail2ban_bantime: 10m
+common_fail2ban_findtime: 10m
+common_fail2ban_maxretry: 5
+# Ne jamais se bannir soi-même depuis le LAN.
+common_fail2ban_ignoreip: "127.0.0.1/8 ::1 192.168.0.0/16 10.0.0.0/8"
+
+# Fichiers de configuration fail2ban antérieurs à l'IaC. Ils sont signalés, pas
+# supprimés : ils portent encore des jails qu'aucun rôle ne revendique.
+common_fail2ban_legacy_files:
+  - /etc/fail2ban/jail.d/local.conf

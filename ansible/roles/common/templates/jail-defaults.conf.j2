@@ -1,0 +1,18 @@
+# {{ ansible_managed }}
+#
+# Réglages par défaut de fail2ban. Les jails propres à un service sont posées
+# par le rôle qui déploie ce service, dans leur propre fichier de jail.d/ :
+# ce fichier-ci ne doit contenir que ce qui vaut pour tous.
+#
+# Debian 12 n'écrit plus /var/log/auth.log — journald uniquement. La jail sshd
+# doit donc utiliser le backend systemd, sinon elle démarre sans rien lire et
+# ne bannit jamais personne, silencieusement.
+[DEFAULT]
+bantime  = {{ common_fail2ban_bantime }}
+findtime = {{ common_fail2ban_findtime }}
+maxretry = {{ common_fail2ban_maxretry }}
+ignoreip = {{ common_fail2ban_ignoreip }}
+
+[sshd]
+enabled = true
+backend = systemd

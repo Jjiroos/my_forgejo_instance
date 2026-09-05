@@ -1,0 +1,99 @@
+- name: Vérifier que le profil d'hôte est déclaré
+  ansible.builtin.assert:
+    that: host_profile is defined
+    fail_msg: >-
+      host_profile doit être défini dans l'inventaire (raspberry_pi ou
+      generic_amd64). Plusieurs rôles s'en servent pour conditionner ce qui
+      est spécifique au Raspberry Pi.
+    quiet: true
+
+- name: Installer les paquets de base
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# ── Réglages noyau ────────────────────────────────────────────
+- name: Appliquer les réglages sysctl
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_file: "{{ item.file }}"
+    sysctl_set: true      # applique à chaud en plus d'écrire le fichier
+    reload: true
+    state: present
+  loop: "{{ common_sysctl }}"
+  loop_control:
+    label: "{{ item.name }} = {{ item.value }}"
+
+# ── Pare-feu ──────────────────────────────────────────────────
+# Aucun `ufw reset` nulle part : la machine peut héberger des services hors
+# périmètre dont les règles ne nous appartiennent pas. Ce rôle ajoute, il ne
+# fait jamais autorité sur l'ensemble des règles.
+- name: Poser les politiques par défaut d'UFW
+  community.general.ufw:
+    direction: "{{ item.direction }}"
+    policy: "{{ item.policy }}"
+  loop:
+    - { direction: incoming, policy: "{{ common_ufw_policy_incoming }}" }
+    - { direction: outgoing, policy: "{{ common_ufw_policy_outgoing }}" }
+    - { direction: routed,   policy: "{{ common_ufw_policy_routed }}" }
+  loop_control:
+    label: "{{ item.direction }} → {{ item.policy }}"
+
+# Avant l'activation, impérativement : activer UFW sans règle SSH couperait
+# la connexion en cours et rendrait l'hôte injoignable.
+- name: Ouvrir les ports de base
+  community.general.ufw:
+    rule: "{{ item.rule }}"
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    from_ip: "{{ item.from_ip | default('any') }}"
+    comment: "{{ item.comment | default(omit) }}"
+  loop: "{{ common_ufw_rules }}"
+  loop_control:
+    label: "{{ item.rule }} {{ item.port }}/{{ item.proto }} depuis {{ item.from_ip | default('any') }}"
+
+- name: Activer UFW
+  community.general.ufw:
+    state: enabled
+
+# ── fail2ban ──────────────────────────────────────────────────
+- name: Déposer les réglages par défaut de fail2ban
+  ansible.builtin.template:
+    src: jail-defaults.conf.j2
+    dest: /etc/fail2ban/jail.d/00-defaults.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Recharger fail2ban
+
+- name: Activer fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+
+# Sur un hôte configuré à la main avant l'IaC, jail.d/ contient souvent un
+# fichier fourre-tout mêlant les réglages généraux et les jails de services.
+# On ne le supprime pas ici : il porte encore des jails qu'aucun rôle ne
+# possède. Il sera retiré quand le rôle qui les revendique existera.
+- name: Détecter une configuration fail2ban antérieure à l'IaC
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ common_fail2ban_legacy_files }}"
+  register: common_fail2ban_legacy_stat
+  changed_when: false
+
+- name: Signaler les fichiers fail2ban non encore repris
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item }} existe et n'est géré par aucun rôle. Ses sections
+      [DEFAULT] et [sshd] font doublon avec 00-defaults.conf — sans effet, les
+      valeurs étant identiques et jail.d/ étant chargé par ordre alphabétique.
+      À supprimer une fois ses jails de service reprises par leur rôle.
+  loop: "{{ common_fail2ban_legacy_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
