@@ -48,6 +48,14 @@ La jail ne vaut que si l'adresse journalisée est celle du client et non celle d
 
 **Le formulaire seul est couvert, et c'est délibéré.** Une authentification refusée sur `/api/v1/` en basic auth ne laisse dans le journal qu'un `401 Unauthorized` de routeur, identique à celui d'une requête anonyme : bâtir une jail dessus reviendrait à bannir quiconque interroge l'API sans jeton. La force brute sur mot de passe passe par `/user/login` ; un jeton d'API volé ne se défend pas par fail2ban mais par sa révocation.
 
+### Le piège du backend
+
+La jail déclare `backend = auto` **dans sa propre section**, jamais dans un `[DEFAULT]`. Ubuntu 24.04 dépose un `jail.d/defaults-debian.conf` qui impose `backend = systemd` à toutes les jails ; `jail.d/` étant fusionné par ordre alphabétique, ce fichier passe après les nôtres et l'emporte. Une jail de fichier qui hérite du journal ignore son `logpath` sans le dire, et compte zéro indéfiniment.
+
+Debian 12 n'a pas ce réglage : le défaut n'y serait jamais apparu. C'est la CI sur Ubuntu qui l'a révélé — une divergence de distribution attrapée sur une plateforme qui n'est même pas la cible.
+
+Le symptôme se lit d'un coup d'œil : `fail2ban-client status forgejo` affiche `File list:` pour une jail de fichier, `Journal matches:` pour une jail de journal.
+
 Se vérifie sans attendre une attaque :
 
 ```bash

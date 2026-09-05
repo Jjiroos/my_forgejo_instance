@@ -66,3 +66,10 @@ forgejo_fail2ban_maxretry: 5
 forgejo_fail2ban_bantime: 1h
 forgejo_fail2ban_findtime: 10m
 forgejo_log_file: "{{ forgejo_data_dir }}/gitea/log/gitea.log"
+
+# Backend de lecture, déclaré au niveau de la jail et non hérité. Ubuntu 24.04
+# impose `backend = systemd` à toutes les jails depuis son propre fichier de
+# jail.d/, chargé après les nôtres ; une jail qui lit un fichier et hérite du
+# journal ne lit rien du tout. Debian 12 n'a pas ce réglage — le défaut n'y
+# serait jamais apparu.
+forgejo_fail2ban_backend: auto

@@ -220,6 +220,8 @@ Trois contrôles portent sur ce qui échoue silencieusement quand on ne le regar
 
 Pour que cette dernière mesure soit possible, la CI passe `ignoreself` à `false` et remplace `ignoreip` par un préfixe RFC 5737 : sans cela, toute tentative émise depuis le runner serait exemptée, et une jail muette resterait indiscernable d'une jail qui fonctionne.
 
+Ce contrôle a payé dès sa première exécution, et pas là où on l'attendait : Ubuntu 24.04 impose `backend = systemd` à toutes les jails depuis un fichier de `jail.d/` chargé après les nôtres, si bien que la jail de la forge ignorait son `logpath`. Debian 12 n'a pas ce réglage — le défaut n'existait pas sur la cible réelle. Une CI qui tourne sur une plateforme que le projet ne vise pas reste utile : elle expose les hypothèses qu'on ne savait pas avoir prises.
+
 ### Les secrets, et leur absence
 
 Aucun secret n'est nécessaire, et aucun n'est configuré. Le mode `selfsigned` du rôle `acme` existe pour cela : émettre un vrai certificat exigerait le jeton DuckDNS d'un compte personnel, ce qui n'a pas sa place ici. Le mode auto-signé produit les mêmes fichiers aux mêmes chemins — de quoi éprouver le rôle `nginx` de bout en bout.

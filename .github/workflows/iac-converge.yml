@@ -213,6 +213,14 @@ jobs:
         run: |
           sudo fail2ban-client status forgejo
 
+          # Une jail qui lit un fichier annonce « File list ». Si elle annonce
+          # « Journal matches », elle a hérité d'un backend systemd et ignore
+          # logpath en silence — le compteur resterait à zéro pour toujours.
+          if ! sudo fail2ban-client status forgejo | grep -q 'File list'; then
+            echo "::error::La jail forgejo n'est pas en backend fichier : elle ignore logpath."
+            exit 1
+          fi
+
           # Le formulaire web, et pas l'API. Un échec de basic auth sur
           # /api/v1/ ne produit qu'une ligne de routeur « 401 Unauthorized »,
           # strictement identique à celle d'une requête anonyme légitime : on

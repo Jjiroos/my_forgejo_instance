@@ -6,9 +6,20 @@
 #
 # Les valeurs générales (bantime par défaut, ignoreip) viennent de
 # 00-defaults.conf, posé par le rôle common et chargé avant celui-ci.
+#
+# `backend` est déclaré ici, dans la jail, et surtout pas dans un [DEFAULT].
+# jail.d/ est fusionné par ordre alphabétique, et Ubuntu 24.04 y dépose un
+# defaults-debian.conf qui impose `backend = systemd` à tout le monde — après
+# nos fichiers, donc il gagne. Un réglage porté par la jail elle-même prime sur
+# n'importe quel [DEFAULT], quel que soit l'ordre de lecture.
+#
+# Le symptôme, si on l'oublie : `fail2ban-client status forgejo` affiche
+# « Journal matches: » là où une jail de fichier affiche « File list: », le
+# logpath est ignoré en silence, et le compteur reste à zéro pour toujours.
 [forgejo]
 enabled  = true
 filter   = forgejo
+backend  = {{ forgejo_fail2ban_backend }}
 logpath  = {{ forgejo_log_file }}
 port     = {{ forgejo_port }}
 maxretry = {{ forgejo_fail2ban_maxretry }}
