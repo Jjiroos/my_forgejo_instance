@@ -1,0 +1,202 @@
+# Mise en veille de SonarQube : il ne tourne que quand la CI s'en sert.
+#
+# Au repos, SonarQube et sa base occupent ~1,7 Gio pour rien. Le cycle :
+#
+#   réveil — un job CI (examples/sonar/sonar-wake.sh) horodate `sonar-activity`,
+#            passe les deux StatefulSets à 1 et attend /api/system/status = UP ;
+#   veille — le CronJob ci-dessous, toutes les 10 min, les repasse à 0 si la
+#            dernière activité date de plus de 30 min ET que le Compute Engine
+#            n'a aucune tâche en attente ou en cours.
+#
+# Pourquoi pas un arrêt en fin de job : deux pipelines concurrentes, la
+# première couperait SonarQube sous la seconde. Le délai d'inactivité absorbe
+# ce cas, et laisse le temps de consulter le rapport.
+#
+# Les droits sont bornés par `resourceNames` : le jeton confié à la CI ne peut
+# que changer le nombre de répliques de ces deux StatefulSets et horodater ce
+# ConfigMap — pas modifier un gabarit de pod, donc pas exécuter de code ici.
+
+# Horodatage de la dernière activité CI, en secondes epoch (clé lastActivity).
+# Volontairement sans `data` : réappliquer ce fichier n'efface pas la valeur.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sonar-activity
+  namespace: sonarqube
+---
+# ── Réveil : identité confiée à la CI ────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sonar-waker
+  namespace: sonarqube
+---
+# Jeton longue durée, rempli par Kubernetes : aucune valeur dans ce fichier.
+# Il devient le secret Forgejo SONAR_KUBE_TOKEN (cf. SETUP-SONARQUBE.md §8).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sonar-waker-token
+  namespace: sonarqube
+  annotations:
+    kubernetes.io/service-account.name: sonar-waker
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sonar-waker
+  namespace: sonarqube
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    resourceNames: ["sonarqube", "sonarqube-db"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["sonar-activity"]
+    verbs: ["patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sonar-waker
+  namespace: sonarqube
+subjects:
+  - kind: ServiceAccount
+    name: sonar-waker
+    namespace: sonarqube
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sonar-waker
+---
+# ── Veille : le CronJob ──────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sonar-idle
+  namespace: sonarqube
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sonar-idle
+  namespace: sonarqube
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    resourceNames: ["sonarqube", "sonarqube-db"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["sonar-activity"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    resourceNames: ["sonarqube-0"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sonar-idle
+  namespace: sonarqube
+subjects:
+  - kind: ServiceAccount
+    name: sonar-idle
+    namespace: sonarqube
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sonar-idle
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sonar-idle
+  namespace: sonarqube
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          serviceAccountName: sonar-idle
+          restartPolicy: Never
+          containers:
+            - name: idle
+              image: curlimages/curl:8.16.0
+              env:
+                - name: IDLE_SECONDS
+                  value: "1800"
+                # Jeton utilisateur d'un administrateur SonarQube : l'état du
+                # Compute Engine exige « Administer System ». Facultatif — sans
+                # lui, la veille ne se fie qu'à l'horodatage (cf. §8).
+                - name: SONAR_ADMIN_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: sonarqube-idle-token
+                      key: token
+                      optional: true
+              command: ["sh", "-eu", "-c"]
+              args:
+                - |
+                  API=https://kubernetes.default.svc
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  NS=sonarqube
+                  SONAR=http://sonarqube:9000
+                  POD_GONE_TIMEOUT=180
+
+                  k() { curl -fsS --cacert "$SA/ca.crt" -H "Authorization: Bearer $(cat "$SA/token")" "$@"; }
+                  scale() {
+                    k -X PATCH -H 'Content-Type: application/merge-patch+json' \
+                      -d "{\"spec\":{\"replicas\":$2}}" \
+                      "$API/apis/apps/v1/namespaces/$NS/statefulsets/$1/scale" >/dev/null
+                  }
+
+                  # spec précède status dans la réponse : la première occurrence
+                  # est le nombre de répliques demandé.
+                  wanted=$(k "$API/apis/apps/v1/namespaces/$NS/statefulsets/sonarqube/scale" \
+                    | grep -o '"replicas": *[0-9]*' | head -n 1 | grep -o '[0-9]*$')
+                  [ "$wanted" = 0 ] && { echo "déjà en veille"; exit 0; }
+
+                  # Une API injoignable doit faire échouer le job, pas passer
+                  # pour « jamais actif » : d'où la lecture en deux temps.
+                  cm=$(k "$API/api/v1/namespaces/$NS/configmaps/sonar-activity")
+                  last=$(echo "$cm" | grep -o '"lastActivity": *"[0-9]*"' | grep -o '[0-9][0-9]*' || echo 0)
+                  idle=$(( $(date +%s) - last ))
+                  [ "$idle" -lt "$IDLE_SECONDS" ] && { echo "actif il y a ${idle}s, on garde"; exit 0; }
+
+                  if [ -n "${SONAR_ADMIN_TOKEN:-}" ]; then
+                    # Un serveur injoignable n'a rien en cours : on l'arrête aussi,
+                    # un SonarQube cassé ne doit pas garder sa RAM indéfiniment.
+                    ce=$(curl -fsS -u "$SONAR_ADMIN_TOKEN:" "$SONAR/api/ce/activity_status" || true)
+                    if echo "$ce" | grep -Eq '"(pending|inProgress)": *[1-9]'; then
+                      echo "Compute Engine occupé ($ce), on garde"; exit 0
+                    fi
+                  else
+                    echo "⚠ sonarqube-idle-token absent : décision sur l'horodatage seul"
+                  fi
+
+                  echo "inactif depuis ${idle}s : mise en veille"
+                  scale sonarqube 0
+                  # La base s'arrête après SonarQube, jamais sous lui.
+                  waited=0
+                  while k "$API/api/v1/namespaces/$NS/pods/sonarqube-0" >/dev/null 2>&1; do
+                    [ "$waited" -ge "$POD_GONE_TIMEOUT" ] && { echo "sonarqube-0 toujours là après ${waited}s" >&2; exit 1; }
+                    sleep 5; waited=$(( waited + 5 ))
+                  done
+                  scale sonarqube-db 0
+                  echo "✓ en veille"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  cpu: 100m
+                  memory: 32Mi

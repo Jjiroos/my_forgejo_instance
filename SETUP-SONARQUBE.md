@@ -27,7 +27,7 @@ Déploiement d'un **SonarQube Community** sur le cluster k3s monté par [SETUP-K
 | Python, Java, JS/TS, C#, Go, Kotlin, PHP, Ruby, Scala, HTML, CSS, XML | ✅ analysé nativement |
 | **C, C++** | ❌ analyseur réservé aux éditions payantes — contournement en [§6](#6-le-cas-c--c) |
 
-**Et une contrainte matérielle :** SonarQube ne s'endort pas. Ses trois JVM (web, Compute Engine, Elasticsearch) gardent leur tas. Mesuré ici **au repos, sans aucune analyse : 2,0 Gio**. Ce n'est pas un service qu'on installe « au cas où » sur une petite machine — voir [§8](#8-budget-mémoire).
+**Et une contrainte matérielle :** SonarQube ne s'endort pas. Ses trois JVM (web, Compute Engine, Elasticsearch) gardent leur tas. Mesuré ici **au repos, sans aucune analyse : 2,0 Gio**. Ce n'est pas un service qu'on laisse tourner « au cas où » sur une petite machine : il est donc **en veille par défaut**, réveillé par la CI et rendormi après 30 min sans analyse — voir [§8](#8-budget-mémoire).
 
 L'architecture retenue :
 
@@ -73,6 +73,14 @@ kubectl -n sonarqube create secret generic sonarqube-db \
 ./k3s/apply.sh sonarqube
 ```
 
+Les manifestes laissent SonarQube **en veille** (`replicas: 0`, cf. [§8](#8-budget-mémoire)). Le premier démarrage se fait donc à la main — l'horodatage évite que la veille ne l'éteigne avant 30 min :
+
+```bash
+kubectl -n sonarqube patch configmap sonar-activity --type=merge \
+  -p "{\"data\":{\"lastActivity\":\"$(date +%s)\"}}"
+kubectl -n sonarqube scale statefulset sonarqube-db sonarqube --replicas=1
+```
+
 Suivre le démarrage — compter **3 à 5 minutes** au premier lancement, le temps qu'Elasticsearch construise ses index :
 
 ```bash
@@ -86,10 +94,11 @@ Tant que le statut est `STARTING`, l'API répond déjà mais l'interface n'est p
 
 | Fichier | Contenu |
 |---|---|
-| `k3s/sonarqube/00-namespace.yaml` | namespace, `ResourceQuota` 3 Gio / 3 CPU, `LimitRange` |
+| `k3s/sonarqube/00-namespace.yaml` | namespace, `ResourceQuota` 3 Gio / 3,1 CPU, `LimitRange` |
 | `k3s/sonarqube/10-postgres.yaml` | PostgreSQL 16 dédié + PVC 5 Gio |
 | `k3s/sonarqube/20-sonarqube.yaml` | SonarQube + PVC data (10 Gio) et extensions (2 Gio) |
 | `k3s/sonarqube/30-networkpolicy.yaml` | qui a le droit de joindre l'IHM et la base |
+| `k3s/sonarqube/40-veille.yaml` | mise en veille : horodatage, droits de réveil, `CronJob` d'arrêt |
 
 Trois décisions qui méritent une explication :
 
@@ -141,6 +150,8 @@ Dans Forgejo, sur le dépôt à analyser : *Paramètres → Actions → Secrets*
 |---|---|
 | `SONAR_HOST_URL` | `http://<IP_LAN>:9000` |
 | `SONAR_TOKEN` | le token généré en [§4](#4-première-connexion-et-token-ci) |
+| `SONAR_KUBE_TOKEN` | le jeton de réveil, cf. [§8](#réveil-depuis-la-ci) |
+| `SONAR_KUBE_CA` | l'autorité du cluster, cf. [§8](#réveil-depuis-la-ci) |
 
 > Un secret d'**utilisateur** ou d'**organisation** (*Paramètres du compte → Actions → Secrets*) évite de le répéter sur chaque dépôt — le bon choix dès qu'on a plus d'un projet à analyser.
 
@@ -178,7 +189,7 @@ docker compose exec -T db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
 
 L'API le confirme aussi : les secrets n'exposent que `PUT` et `DELETE`, jamais de `GET`.
 
-Copier ensuite [`examples/workflows/sonar-analysis.yml`](examples/workflows/sonar-analysis.yml) dans `.forgejo/workflows/` du dépôt, et pousser.
+Copier ensuite [`examples/workflows/sonar-analysis.yml`](examples/workflows/sonar-analysis.yml) dans `.forgejo/workflows/` du dépôt et [`examples/sonar/sonar-wake.sh`](examples/sonar/sonar-wake.sh) à sa racine, et pousser.
 
 ### L'action officielle fonctionne aussi en arm64
 
@@ -444,13 +455,56 @@ kubectl -n forgejo-actions scale statefulset forgejo-runner --replicas=0   # pau
 kubectl -n forgejo-actions scale statefulset forgejo-runner --replicas=1   # reprise
 ```
 
-Et pour SonarQube lui-même :
+SonarQube, lui, n'a pas besoin de ce geste : il se met en veille tout seul.
+
+### Mise en veille
+
+Le tableau ci-dessus décrit SonarQube **allumé**. Il ne l'est que lorsqu'on s'en sert : au repos, ses ~1,7 Gio reviennent à la machine. Les volumes, l'historique d'analyse et la configuration sont conservés.
+
+| Phase | Qui | Quoi |
+|---|---|---|
+| Réveil | le job CI, via `sonar-wake.sh` | horodate `sonar-activity`, passe base et serveur à 1 réplique, attend `UP` |
+| Fin d'analyse | le job CI, `sonar-wake.sh --touch` | horodate à nouveau : le délai part de là |
+| Veille | le `CronJob` `sonar-idle`, toutes les 10 min | si 30 min sans activité **et** Compute Engine sans tâche : serveur à 0, puis base à 0 |
+
+Le réveil prend **environ 60 s** sur ce Pi 5 ; c'est le surcoût de la première analyse après une période calme. Deux analyses rapprochées ne le paient qu'une fois.
+
+**Pourquoi un délai et pas un arrêt en fin de job** : deux pipelines concurrentes, la première éteindrait SonarQube sous la seconde. Le délai absorbe ce cas et laisse le temps de lire le rapport.
+
+**Limite connue** : une analyse dont la phase locale (côté scanner) dure plus de 30 min peut voir SonarQube s'éteindre avant l'envoi de son rapport. Pour un tel projet, relever `IDLE_SECONDS` dans `40-veille.yaml`.
+
+**Consulter les rapports** : copier [`examples/workflows/sonar-wake.yml`](examples/workflows/sonar-wake.yml) dans un dépôt au choix (avec `sonar-wake.sh`), puis *Actions → Allumer SonarQube → Run workflow*. Chaque lancement relance les 30 min.
+
+#### Réveil depuis la CI
+
+Le job parle à l'API k3s (`https://<IP_LAN>:6443`, déduite de `SONAR_HOST_URL`) avec le jeton du ServiceAccount `sonar-waker`. Ses droits se limitent à changer le nombre de répliques des deux StatefulSets et à horodater `sonar-activity` : ni lecture de secret, ni modification de gabarit de pod.
+
+Relever les deux valeurs à placer en secrets Forgejo (§5) :
 
 ```bash
-kubectl -n sonarqube scale statefulset sonarqube --replicas=0
+kubectl -n sonarqube get secret sonar-waker-token -o jsonpath='{.data.token}'  | base64 -d   # SONAR_KUBE_TOKEN
+kubectl -n sonarqube get secret sonar-waker-token -o jsonpath='{.data.ca\.crt}' | base64 -d   # SONAR_KUBE_CA
 ```
 
-Les volumes sont conservés, l'historique d'analyse aussi.
+#### Jeton administrateur de la veille (recommandé)
+
+Pour savoir si le Compute Engine traite encore un rapport, la veille interroge `/api/ce/activity_status`, qui exige *Administer System*. Générer un jeton **utilisateur** depuis le compte administrateur (*Mon compte → Sécurité*), puis :
+
+```bash
+kubectl -n sonarqube create secret generic sonarqube-idle-token --from-literal=token='<JETON>'
+```
+
+Sans lui, la veille se fie à l'horodatage seul et l'écrit dans ses logs (`kubectl -n sonarqube logs job/<dernier sonar-idle-…>`).
+
+#### Forcer à la main
+
+```bash
+kubectl -n sonarqube scale statefulset sonarqube --replicas=0      # endormir
+kubectl -n sonarqube scale statefulset sonarqube-db --replicas=0
+kubectl -n sonarqube create job veille-maintenant --from=cronjob/sonar-idle   # passer la veille tout de suite
+```
+
+⚠️ Réappliquer les manifestes (`./k3s/apply.sh sonarqube`) remet les répliques à 0 : un SonarQube allumé s'éteint.
 
 ---
 

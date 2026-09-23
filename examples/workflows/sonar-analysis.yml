@@ -2,7 +2,9 @@
 # nativement par SonarQube Community.
 #
 # À copier dans `.forgejo/workflows/` du dépôt à analyser.
-# Prérequis : les secrets SONAR_HOST_URL et SONAR_TOKEN (cf. SETUP-SONARQUBE.md).
+# Avec `sonar-wake.sh` à la racine du dépôt (script fourni dans examples/sonar/).
+# Prérequis : les secrets SONAR_HOST_URL, SONAR_TOKEN, SONAR_KUBE_TOKEN et
+# SONAR_KUBE_CA (cf. SETUP-SONARQUBE.md §5 et §8).
 name: Analyse SonarQube
 
 on:
@@ -26,6 +28,14 @@ jobs:
           # SonarQube date les problèmes à partir de l'historique git ; sans
           # l'historique complet, tout apparaît comme du code neuf.
           fetch-depth: 0
+
+      # SonarQube dort par défaut (SETUP-SONARQUBE.md §8) : le démarrer avant tout.
+      - name: Réveiller SonarQube
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_KUBE_TOKEN: ${{ secrets.SONAR_KUBE_TOKEN }}
+          SONAR_KUBE_CA: ${{ secrets.SONAR_KUBE_CA }}
+        run: bash sonar-wake.sh
 
       - name: Installer sonar-scanner (arm64)
         run: |
@@ -52,3 +62,12 @@ jobs:
             #   -Dsonar.tests=tests
             #   -Dsonar.python.version=3.11
             #   -Dsonar.exclusions=**/node_modules/**,**/dist/**
+
+      # Le délai de mise en veille repart de la fin de l'analyse.
+      - name: Horodater l'activité
+        if: always()
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_KUBE_TOKEN: ${{ secrets.SONAR_KUBE_TOKEN }}
+          SONAR_KUBE_CA: ${{ secrets.SONAR_KUBE_CA }}
+        run: bash sonar-wake.sh --touch

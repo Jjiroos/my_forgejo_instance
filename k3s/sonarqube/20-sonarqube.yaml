@@ -29,7 +29,10 @@ metadata:
   namespace: sonarqube
 spec:
   serviceName: sonarqube
-  replicas: 1
+  # 0 : SonarQube dort par défaut. La CI le réveille (examples/sonar/sonar-wake.sh)
+  # et le CronJob de 40-veille.yaml le rendort après 30 min sans activité.
+  # Réappliquer ce manifeste éteint donc un serveur allumé.
+  replicas: 0
   selector:
     matchLabels:
       app: sonarqube

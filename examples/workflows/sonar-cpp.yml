@@ -11,7 +11,7 @@
 # SonarSource : couverture, duplication, hotspots de sécurité sur le C/C++.
 #
 # À copier dans `.forgejo/workflows/`, avec `cppcheck-to-sonar.py` à la racine
-# du dépôt (script fourni dans examples/sonar/).
+# du dépôt, ainsi que `sonar-wake.sh` (scripts fournis dans examples/sonar/).
 name: Analyse SonarQube (C/C++)
 
 on:
@@ -30,6 +30,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # SonarQube dort par défaut (SETUP-SONARQUBE.md §8) : le démarrer avant tout.
+      - name: Réveiller SonarQube
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_KUBE_TOKEN: ${{ secrets.SONAR_KUBE_TOKEN }}
+          SONAR_KUBE_CA: ${{ secrets.SONAR_KUBE_CA }}
+        run: bash sonar-wake.sh
 
       - name: Installer cppcheck et sonar-scanner
         run: |
@@ -64,3 +72,12 @@ jobs:
             -Dsonar.host.url="$SONAR_HOST_URL" \
             -Dsonar.scm.provider=git \
             -Dsonar.externalIssuesReportPaths=sonar-cppcheck.json
+
+      # Le délai de mise en veille repart de la fin de l'analyse.
+      - name: Horodater l'activité
+        if: always()
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_KUBE_TOKEN: ${{ secrets.SONAR_KUBE_TOKEN }}
+          SONAR_KUBE_CA: ${{ secrets.SONAR_KUBE_CA }}
+        run: bash sonar-wake.sh --touch

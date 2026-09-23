@@ -21,7 +21,9 @@ spec:
   hard:
     requests.cpu: "1"
     requests.memory: 768Mi
-    limits.cpu: "3"
+    # SonarQube 2 + PostgreSQL 1 + 100m pour le CronJob de veille, qui doit
+    # pouvoir démarrer précisément quand les deux autres tournent.
+    limits.cpu: 3100m
     limits.memory: 3Gi
     pods: "4"
     persistentvolumeclaims: "4"

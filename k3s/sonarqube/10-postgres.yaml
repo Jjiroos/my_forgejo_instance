@@ -26,7 +26,8 @@ metadata:
   namespace: sonarqube
 spec:
   serviceName: sonarqube-db
-  replicas: 1
+  # 0 : réveillée et endormie avec SonarQube, cf. 40-veille.yaml.
+  replicas: 0
   selector:
     matchLabels:
       app: sonarqube-db

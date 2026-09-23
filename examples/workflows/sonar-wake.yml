@@ -1,0 +1,26 @@
+# Allume SonarQube à la main, pour consulter les rapports.
+#
+# SonarQube dort par défaut et se rendort après 30 min sans analyse
+# (SETUP-SONARQUBE.md §8). Ce workflow se lance depuis l'onglet Actions du
+# dépôt, bouton « Run workflow ». Chaque lancement relance les 30 min.
+#
+# À copier dans `.forgejo/workflows/` d'un dépôt au choix, avec `sonar-wake.sh`
+# à la racine (script fourni dans examples/sonar/).
+name: Allumer SonarQube
+
+on:
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: docker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Réveiller SonarQube
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_KUBE_TOKEN: ${{ secrets.SONAR_KUBE_TOKEN }}
+          SONAR_KUBE_CA: ${{ secrets.SONAR_KUBE_CA }}
+        run: bash sonar-wake.sh
