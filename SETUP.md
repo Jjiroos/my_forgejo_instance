@@ -566,7 +566,7 @@ Git LFS (Large File Storage) stocke les fichiers binaires lourds (assets de jeu,
 Client git                Forgejo (conteneur)            Hôte (Pi)
 ──────────                ───────────────────            ─────────────────────
 git push      ─────────►  API git  → dépôt git           ./data/gitea/...
-git lfs push  ─────────►  API LFS  → /data/gitea/lfs/  →  ./data/gitea/lfs/
+git lfs push  ─────────►  API LFS  → /data/git/lfs/    →  ./data/git/lfs/
 ```
 
 ### 12.1 Activer le serveur LFS (docker-compose.yml)
@@ -577,14 +577,15 @@ Contrairement à une install native (édition de `app.ini`), tout passe par les 
       # ── Git LFS ──
       - FORGEJO__server__LFS_START_SERVER=true
       - FORGEJO__lfs__STORAGE_TYPE=local
-      - FORGEJO__lfs__PATH=/data/gitea/lfs
+      - FORGEJO__lfs__PATH=/data/git/lfs
 ```
 
 Notes :
 
 - `LFS_START_SERVER=true` active l'endpoint LFS intégré, exposé sur le même port que le git HTTPS (rien de plus à ouvrir).
-- `FORGEJO__lfs__PATH=/data/gitea/lfs` : chemin **dans le conteneur**. Comme `./data` est monté sur `/data` (§4), les objets atterrissent sur l'hôte dans `/opt/forgejo/data/gitea/lfs/` et survivent aux redémarrages / upgrades.
+- `FORGEJO__lfs__PATH=/data/git/lfs` : chemin **dans le conteneur**, le défaut de l'image Docker — l'expliciter évite qu'un changement de version le déplace. Comme `./data` est monté sur `/data` (§4), les objets atterrissent sur l'hôte dans `/opt/forgejo/data/git/lfs/` et survivent aux redémarrages / upgrades. **Une restauration doit remettre les objets à ce même chemin**, sinon les dépôts pointent vers des fichiers introuvables.
 - **Pas de `mkdir`/`chown` manuel** : Forgejo crée le dossier au démarrage avec l'UID du conteneur (`USER_UID=1000`).
+- **Sur piserv**, ces réglages ont été posés à la main dans `data/gitea/conf/app.ini` (`[server] LFS_START_SERVER`, `LFS_HTTP_AUTH_EXPIRY = 20m`, `LFS_MAX_FILE_SIZE = 0`, `LFS_LOCKS_PAGING_NUM = 50` ; `[lfs] PATH = /data/git/lfs`), pas dans `docker-compose.yml`. L'effet est le même ; au démarrage, les variables `FORGEJO__*` sont réécrites dans `app.ini` et l'emportent.
 - **Secret JWT** : inutile de le générer à la main. Au premier démarrage avec LFS activé, Forgejo génère `LFS_JWT_SECRET` et le persiste dans `data/gitea/conf/app.ini`. Pour le vérifier : `sudo grep LFS_JWT_SECRET /opt/forgejo/data/gitea/conf/app.ini`.
 
 ### 12.2 Appliquer
@@ -655,7 +656,7 @@ git lfs pull        # récupérer les objets manquants après un clone
 git lfs prune       # purger les vieux objets LFS locaux
 
 # Espace LFS côté serveur (sur le Pi) :
-du -sh /opt/forgejo/data/gitea/lfs
+du -sh /opt/forgejo/data/git/lfs
 ```
 
 > **Espace disque Pi 5** : les objets LFS s'accumulent vite (compte 2–10 Go pour un projet UE5). Surveille `df -h` régulièrement ; si la carte SD est juste, déplace le volume `./data` (ou monte un disque externe) et adapte le bind-mount du `docker-compose.yml`.
