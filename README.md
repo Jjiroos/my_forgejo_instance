@@ -50,6 +50,41 @@ Cela ne couvre que les conteneurs. Le sous-domaine DuckDNS, le certificat, nginx
 fail2ban, le service systemd et le port-forward sont détaillés pas à pas dans
 [SETUP.md](SETUP.md) — à faire dans l'ordre pour une instance réellement exposée.
 
+## Brancher l'analyse SonarQube sur un dépôt
+
+SonarQube est en veille par défaut : le job CI le réveille, il se rendort après
+30 min sans analyse. Un dépôt analysé a besoin de trois choses.
+
+**1. Des secrets Forgejo**, de préférence au niveau utilisateur
+(`/user/settings/actions/secrets`) pour servir à tous les dépôts. Ce sont des
+*Secrets*, pas des *Variables*.
+
+| Secret | Valeur |
+|---|---|
+| `SONAR_HOST_URL` | `http://<IP_LAN>:9000` |
+| `SONAR_TOKEN` | jeton d'analyse SonarQube ([§4](SETUP-SONARQUBE.md#4-première-connexion-et-token-ci)) |
+| `SONAR_KUBE_TOKEN` | `kubectl -n sonarqube get secret sonar-waker-token -o jsonpath='{.data.token}' \| base64 -d` |
+| `SONAR_KUBE_CA` | `kubectl -n sonarqube get secret sonar-waker-token -o jsonpath='{.data.ca\.crt}' \| base64 -d` — bloc PEM entier |
+
+**2. Des fichiers copiés depuis `examples/`**
+
+| Fichier | Destination dans le dépôt analysé |
+|---|---|
+| `sonar/sonar-wake.sh` | racine |
+| `workflows/sonar-analysis.yml` (ou `sonar-cpp.yml` + `sonar/cppcheck-to-sonar.py` pour du C/C++) | `.forgejo/workflows/` |
+| `workflows/sonar-wake.yml` — bouton « Allumer SonarQube » pour consulter les rapports | `.forgejo/workflows/` d'un seul dépôt suffit |
+
+**3. Côté cluster, une fois** (recommandé) : un jeton utilisateur d'un
+administrateur SonarQube, pour que la veille n'éteigne jamais le serveur pendant
+le traitement d'un rapport.
+
+```bash
+kubectl -n sonarqube create secret generic sonarqube-idle-token --from-literal=token='<JETON>'
+```
+
+Détail et raisons : [SETUP-SONARQUBE.md §5](SETUP-SONARQUBE.md#5-brancher-un-dépôt)
+et [§8](SETUP-SONARQUBE.md#mise-en-veille).
+
 ## Contenu du dépôt
 
 | Fichier | Description |
@@ -63,7 +98,7 @@ fail2ban, le service systemd et le port-forward sont détaillés pas à pas dans
 | `secrets/` | **gabarits seuls, sans aucune valeur.** Les fichiers chiffrés restent hors du dépôt — cf. [IAC.md §6](IAC.md#6-secrets--hors-du-dépôt-sans-exception) |
 | `docker-compose.yml` | services `forgejo` + `db`, paramétrés par `.env` |
 | `k3s/` | manifestes par composant — `runner/`, `sonarqube/` — et `apply.sh` |
-| `examples/` | workflows d'analyse prêts à copier et convertisseur cppcheck → SonarQube |
+| `examples/` | workflows d'analyse prêts à copier, script de réveil de SonarQube, convertisseur cppcheck → SonarQube |
 | `.forgejo/workflows/ci-demo.yml` | workflow de démonstration, sert de test de recette |
 | `.github/workflows/` | CI publique : lint de l'IaC, garde anti-secret, convergence réelle sur runner jetable |
 | `.env-template` | gabarit de configuration à copier en `.env` |
