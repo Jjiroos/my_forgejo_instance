@@ -581,6 +581,31 @@ Les inscriptions restant fermées, Google **ne crée pas de compte** : à la pre
 
 L'ancien OpenID 2.0 est désactivé (`ENABLE_OPENID_SIGNIN=false`) : Google le remplace, et le laisser ouvert offrait une inscription alors que `DISABLE_REGISTRATION` la ferme.
 
+#### Appliquer et vérifier
+
+```bash
+cd /opt/forgejo && docker compose up -d forgejo          # quelques secondes de coupure
+docker exec forgejo grep -A6 '^\[mailer\]' /data/gitea/conf/app.ini | grep -v PASSWD
+docker exec -u git forgejo forgejo admin auth list        # google  OAuth2  true
+```
+
+Puis, dans le navigateur : e-mail de test (ci-dessus), « Mot de passe oublié » sur un compte à adresse réelle, et une connexion Google. Validé le 26 septembre 2026.
+
+#### Côté utilisateur — à transmettre
+
+- **Mot de passe oublié** : page de connexion → *Mot de passe oublié ?* → saisir l'adresse du compte. Le lien arrive par mail (regarder les spams au premier envoi) et reste valable 3 heures.
+- **Se connecter avec Google** : l'adresse Gmail doit figurer parmi les utilisateurs tests (étape 2). Première fois : Forgejo propose de **lier** le compte Google à un compte existant — saisir son login et son mot de passe Forgejo, une seule fois.
+- **Rester connecté** : cocher *Se souvenir de moi* — 30 jours.
+
+#### Pièges rencontrés
+
+| Symptôme | Cause |
+|---|---|
+| *Mots de passe des applications* introuvable dans les paramètres Google | Le menu n'existe plus : passer par l'URL directe. « Non disponible » = validation en deux étapes absente, passkey seule, ou mauvais compte actif — ajouter `?authuser=sc0vil.forge@gmail.com` |
+| `./.env: line N: xxxx: command not found` en chargeant `.env` | Mot de passe d'application collé avec ses espaces d'affichage : le shell prend le second bloc pour une commande. Retirer les espaces |
+| Source Google créée avec un secret vide | Nom de variable mal orthographié dans `.env` (`OUATH`) : `set -a; . ./.env` ne signale rien. Vérifier avec `docker exec -u git forgejo forgejo admin auth list` puis *Administration → Sources d'authentification* |
+| Mail de réinitialisation jamais reçu | Adresse de compte factice (`@example.com`) : la corriger dans *Paramètres → Compte* |
+
 ---
 
 ## 11. Cloner et pousser un dépôt
