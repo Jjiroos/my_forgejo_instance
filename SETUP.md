@@ -498,7 +498,7 @@ L'inscription publique est **désactivée** (`DISABLE_REGISTRATION = true`, §10
 ```bash
 docker exec -u git forgejo forgejo admin user create \
   --username <PSEUDO> \
-  --email <PSEUDO>@example.com \
+  --email <ADRESSE_RÉELLE> \
   --password '<MDP_TEMPORAIRE>' \
   --must-change-password
 ```
@@ -509,7 +509,7 @@ docker exec -u git forgejo forgejo admin user create \
 | `--random-password`      | Forgejo génère le mot de passe et l'affiche (remplace `--password`)    |
 | `--admin`                | Donne les droits admin — **à éviter** pour de simples utilisateurs    |
 
-> 📭 Le mailer est désactivé (`[mailer] ENABLED = false`, §4) : Forgejo **n'envoie aucun email**. L'email demandé n'est qu'un placeholder (l'utilisateur le corrigera dans *Settings → Account*), et c'est à toi de transmettre `login` + mot de passe temporaire de la main à la main (Signal, etc.).
+> 📬 L'adresse doit être **réelle** : c'est là qu'arrive le lien « Mot de passe oublié » (§10.6). Le login et le mot de passe temporaire, eux, se transmettent toujours de la main à la main (Signal, etc.).
 
 #### Lister les utilisateurs
 
@@ -538,6 +538,48 @@ docker exec -u git forgejo forgejo admin user --help
 ```
 
 > La création/suppression est **immédiate** : pas besoin de redémarrer le conteneur.
+
+### 10.6 Mail et connexion Google
+
+Deux services pour les utilisateurs, sans aucun code : le lien **« Mot de passe oublié »** qui envoie un mail de réinitialisation, et le bouton **« Se connecter avec Google »**. La case « Se souvenir de moi » garde la session **30 jours** (`LOGIN_REMEMBER_DAYS`), quelle que soit la méthode de connexion.
+
+Les deux reposent sur le compte Google dédié `sc0vil.forge@gmail.com` — jamais un compte personnel : son mot de passe d'application vit sur le serveur et ouvre toute la boîte.
+
+#### Mail sortant (Gmail)
+
+Un envoi direct depuis une IP résidentielle est bloqué ou classé en spam ; Forgejo passe donc par le SMTP de Gmail, qui n'accepte qu'un **mot de passe d'application** :
+
+1. Activer la validation en deux étapes du compte, avec un téléphone — une passkey seule masque l'option suivante.
+2. Ouvrir https://myaccount.google.com/apppasswords (le menu n'est plus accessible depuis les paramètres), créer « Forgejo ».
+3. Reporter les 16 lettres **sans espaces** dans `.env` → `FORGEJO_MAILER_PASSWORD`.
+
+Le reste est dans `docker-compose.yml` (bloc `mailer`). Test : *Administration du site → Configuration → Configuration du service de messagerie → Envoyer un e-mail de test*.
+
+#### Connexion Google (OpenID Connect)
+
+Dans https://console.cloud.google.com, avec le compte dédié :
+
+1. Projet `sc0vil-forge` → *Google Auth Platform* → *Commencer* : cible **Externe**.
+2. *Audience* → *Utilisateurs tests* : les adresses Gmail autorisées. L'application **reste en mode Test** — la publier imposerait une validation par Google, qu'un domaine `duckdns.org` n'obtiendrait pas. Limite : 100 utilisateurs.
+3. *Clients* → *Créer un client* → **Application Web**, URI de redirection :
+   `https://<SOUS_DOMAINE>.duckdns.org:8181/user/oauth2/google/callback`
+4. Reporter l'ID et le secret dans `.env` (`GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`).
+
+La source d'authentification vit **en base**, pas dans `app.ini` : elle se crée une fois, et survit aux redémarrages. Son nom `google` fixe l'URI de rappel ci-dessus.
+
+```bash
+cd /opt/forgejo && set -a && . ./.env && set +a
+docker exec -u git forgejo forgejo admin auth add-oauth \
+  --name google --provider openidConnect \
+  --key "$GOOGLE_OAUTH_CLIENT_ID" --secret "$GOOGLE_OAUTH_CLIENT_SECRET" \
+  --auto-discover-url https://accounts.google.com/.well-known/openid-configuration \
+  --scopes "openid email profile"
+docker exec -u git forgejo forgejo admin auth list
+```
+
+Les inscriptions restant fermées, Google **ne crée pas de compte** : à la première connexion, Forgejo demande de **lier** le compte Google à un compte existant, en saisissant une fois son mot de passe. Ensuite, un clic suffit. Un compte lié se gère dans *Paramètres → Sécurité → Comptes liés*.
+
+L'ancien OpenID 2.0 est désactivé (`ENABLE_OPENID_SIGNIN=false`) : Google le remplace, et le laisser ouvert offrait une inscription alors que `DISABLE_REGISTRATION` la ferme.
 
 ---
 

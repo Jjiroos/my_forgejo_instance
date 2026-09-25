@@ -21,6 +21,19 @@ services:
       # ── Forgejo Actions (runners k3s — voir SETUP-K3S.md) ──
       - FORGEJO__actions__ENABLED=true
       - FORGEJO__actions__DEFAULT_ACTIONS_URL=https://code.forgejo.org
+      # ── Mail : réinitialisation du mot de passe (voir SETUP.md §10.6) ──
+      # Relais Gmail : un envoi direct depuis une IP résidentielle finit en spam.
+      - FORGEJO__mailer__ENABLED=true
+      - FORGEJO__mailer__PROTOCOL=smtps
+      - FORGEJO__mailer__SMTP_ADDR=smtp.gmail.com
+      - FORGEJO__mailer__SMTP_PORT=465
+      - FORGEJO__mailer__USER=sc0vil.forge@gmail.com
+      - FORGEJO__mailer__PASSWD=${FORGEJO_MAILER_PASSWORD}
+      - FORGEJO__mailer__FROM=sc0vil forge <sc0vil.forge@gmail.com>
+      # ── Connexion : session longue, Google à la place d'OpenID 2.0 ──
+      - FORGEJO__security__LOGIN_REMEMBER_DAYS=30
+      - FORGEJO__openid__ENABLE_OPENID_SIGNIN=false
+      - FORGEJO__openid__ENABLE_OPENID_SIGNUP=false
     volumes:
       - ./data:/data
     ports:
